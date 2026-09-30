@@ -31,6 +31,8 @@ def load_labelled(path: Path) -> list[tuple[str, dict, bool]]:
             cells = line.split("\t") + [""]  # label, text, and optionally the sender, which is ignored here
             label, text, metadata = cells[0], cells[1], {}
         label = label.strip().lower()
+        if label == "unsure":  # the labeller could not tell; leave it out rather than guess
+            continue
         if label not in SCAM_LABELS | BENIGN_LABELS:
             raise ValueError(f"line {number}: label {label!r} is not scam or benign. Label every line before measuring.")
         rows.append((text, metadata, label in SCAM_LABELS))

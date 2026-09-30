@@ -321,7 +321,8 @@ data.
   (`benign`, `ham`): the only labels accepted.
 - **`load_labelled` (21–37)** — reads either JSONL rows with a `label` field,
   or tab-separated `label<TAB>text` lines (a third column, the sender, is
-  ignored). Lines 34–35 stop the run if any label is not recognised. Without
+  ignored). Lines 34–35 skip a line labelled `unsure`: the labeller could not
+  tell, so it is left out rather than guessed. Lines 36–37 stop the run if any label is not recognised. Without
   that check, a line nobody had labelled yet would silently count as benign
   and flatter the score.
 - **`sweep` (40–54)**:
@@ -424,6 +425,23 @@ replaces each `?` with `scam` or `benign`. `calibrate.py` refuses the file
 until every line is labelled.
 
 The labels must come from someone who did not write the gate's rules.
+
+---
+
+## `label.py`
+
+Shows one unlabelled message at a time and saves each answer at once.
+
+- **Line 9 `ANSWERS`** — the keys: `s` for scam, `b` for benign, `u` for unsure.
+- **`main` (12–31)**:
+  - **16** — read every line of the file.
+  - **17** — `waiting`: the positions of lines still marked `?`.
+  - **19–24** — for each one, show the sender and the text, and ask until the
+    answer is one of the keys or `q`.
+  - **25–26** — `q` stops; everything answered so far is already saved.
+  - **27–28** — replace the `?` with the label and write the whole file back
+    straight away, so nothing is lost if the window is closed.
+  - **30–31** — say how many are left.
 
 ---
 

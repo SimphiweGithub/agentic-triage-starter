@@ -720,8 +720,8 @@ class CollectionTests(unittest.TestCase):
             path.write_text(f"scam{tab}You have won{tab}33388\n?{tab}See you later{tab}Mum\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 load_labelled(path)
-            path.write_text(f"scam{tab}You have won{tab}33388\nbenign{tab}See you later{tab}Mum\n", encoding="utf-8")
-            self.assertEqual(load_labelled(path), [("You have won", {}, True), ("See you later", {}, False)])
+            path.write_text(f"scam{tab}You have won{tab}33388\nbenign{tab}See you later{tab}Mum\nunsure{tab}Maybe{tab}x\n", encoding="utf-8")
+            self.assertEqual(load_labelled(path), [("You have won", {}, True), ("See you later", {}, False)])  # unsure is left out
 
 
 if __name__ == "__main__":
