@@ -1,0 +1,41 @@
+.phone {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem 3rem;
+  font-size: 1.15rem;
+  line-height: 1.5;
+}
+.phone .brand { font-weight: 700; letter-spacing: 0.02em; opacity: 0.8; }
+.phone h1 { font-size: 1.8rem; margin: 0.25rem 0 0.75rem; }
+.phone h2 { font-size: 1.3rem; margin-top: 1.5rem; }
+.phone ul { padding-left: 1.2rem; }
+.phone li { margin-bottom: 0.4rem; }
+.phone .big {
+  width: 100%;
+  padding: 1rem;
+  font-size: 1.2rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 0.8rem;
+  background: #1f6f4a;
+  color: #fff;
+}
+.phone .state { padding: 0.8rem 1rem; border-radius: 0.8rem; font-weight: 600; }
+.phone .state.on { background: #e3f4ea; color: #145235; }
+.phone .state.off { background: #fdeceb; color: #8a1f17; }
+.phone .warning {
+  padding: 0.9rem 1rem;
+  border-left: 0.35rem solid #c2410c;
+  background: #fff4ec;
+  border-radius: 0.5rem;
+  color: #3b1d0b;
+}
+.phone .muted { opacity: 0.7; font-size: 0.95rem; }
+.phone details { margin-top: 2rem; }
+.phone label { display: block; margin: 0.75rem 0; }
+.phone input { display: block; width: 100%; padding: 0.6rem; font-size: 1rem; margin-top: 0.3rem; box-sizing: border-box; }
+@media (prefers-color-scheme: dark) {
+  .phone .state.on { background: #133524; color: #bfe8cf; }
+  .phone .state.off { background: #3d1512; color: #f6c3bd; }
+  .phone .warning { background: #3a2215; color: #fde3cf; }
+}
