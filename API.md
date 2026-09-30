@@ -142,6 +142,14 @@ actions that were deliberately not repeated.
 | `409` | Not allowed right now, for example a review already decided |
 | `422` | The body does not match the schema; the response says which field |
 
+## Live inbox
+
+If `IMAP_HOST`, `IMAP_USER` and `IMAP_PASSWORD` are set in `.env`, the server
+checks that mailbox every few seconds and takes in each unread email exactly
+as `POST /intake/email` would. Nothing changes for the front end: the new
+incident simply appears in `GET /incidents`. `GET /health` reports whether the
+mailbox and the models are switched on.
+
 ## Demo controls
 
 | Call | Use |

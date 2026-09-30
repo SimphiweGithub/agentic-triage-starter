@@ -236,7 +236,7 @@ hold stays in place.
 - **Line 52** `SUPERSEDING_ACTIONS` — when a `WITHDRAW` runs, any review still
   waiting on that incident is closed, because there is nothing left to approve.
 
-### Thresholds (lines 55–67)
+### Thresholds (lines 55–69)
 
 - **Line 55** `GATE_THRESHOLD = 0.3` — below this risk, a message is benign.
 - **Line 57** `MODEL_YES = 0.7` — the decision model's probability must reach
@@ -250,6 +250,8 @@ hold stays in place.
   days before the message counts as newly created.
 - **Line 67** `JUMP_RATIO = 2.0` — a debit at least twice the previous one from
   the same merchant is a price jump.
+- **Line 69** `NAME_SIMILARITY = 0.6` — how alike a shortened merchant name
+  must be to a registered name to count as the same company.
 
 Which of these are measured:
 
@@ -259,9 +261,11 @@ Which of these are measured:
   We kept 0.30. See `03-judging-messages.md` for what that dataset can and
   cannot tell us.
 - `MODEL_YES`, `MODEL_THREAT_CONFIDENCE`, `CONTAIN_THRESHOLD`, `HIGH_AMOUNT`,
-  `YOUNG_DAYS` and `JUMP_RATIO` are still judgement calls. Say so if asked.
+  `YOUNG_DAYS`, `JUMP_RATIO` and `NAME_SIMILARITY` are still judgement calls.
+  `NAME_SIMILARITY` was set from nine hand-made examples, where right matches
+  scored 0.67 or more and wrong ones 0.56 or less. Say so if asked.
 
-### Protected list (line 71)
+### Protected list (line 73)
 
 `PROTECTED_DOMAINS` — shared mail providers. Blocking `gmail.com` would block
 every legitimate Gmail sender, so the mail filter tool refuses it, and a flag

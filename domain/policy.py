@@ -65,6 +65,8 @@ HIGH_AMOUNT = 300.0
 YOUNG_DAYS = 90
 # A debit this many times larger than the last one from the same merchant is a price jump.
 JUMP_RATIO = 2.0
+# A shortened merchant name must be at least this similar to a registered name to count as the same company.
+NAME_SIMILARITY = 0.6
 
 # Shared mail providers. Flagging one of these domains would block legitimate senders,
 # so the mail filter refuses and the agent must narrow the flag to a single address.

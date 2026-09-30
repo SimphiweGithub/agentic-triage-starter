@@ -9,7 +9,7 @@ Never add a `Co-Authored-By: Codex ...` trailer or any other self-attribution to
 ## Architecture
 
 - One FastAPI process serves `/api/...`. `static/index.html` is a developer console, not the product front end. Cross-origin access is off unless `CORS_ORIGINS` lists the front end's address.
-- Models advise, Python decides. Jev answers yes/no questions in the gate (`domain/gate.py`); Gemini does two language jobs (`domain/language.py`); every model call has a rule-based fallback.
+- Models advise, Python decides. Jev answers yes/no questions in the gate (`domain/gate.py`); Gemini words the warning shown to the person (`domain/language.py`); every model call has a rule-based fallback.
 - Run every lifecycle request through `core/fsm.py`. Illegal transitions enter `PENDING_REVIEW`.
 - Run every action through `core/executor.py`, which gates each attempt with `core/guardrails.py`. High-impact, forbidden, mismatched and low-confidence actions wait for the caregiver.
 - Matching text alone never makes a duplicate. `core/correlator.py` links by explicit link, shared identifier, then guarded fuzzy text.

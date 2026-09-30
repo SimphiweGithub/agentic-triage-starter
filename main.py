@@ -6,7 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.routes import router
+from api.mailbox import start_polling
+from api.routes import router, take_in_email
 
 ROOT = Path(__file__).resolve().parent
 app = FastAPI(title="KinGuard API", version="0.2.0",
@@ -19,6 +20,7 @@ if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 
 app.include_router(router, prefix="/api")
+start_polling(take_in_email)  # live mailbox; does nothing unless IMAP_HOST is set
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 

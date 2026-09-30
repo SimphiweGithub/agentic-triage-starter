@@ -7,6 +7,7 @@ worked) but act on the in-memory `WORLD` and fixture data below.
 """
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 import json
 import os
 from typing import Callable
@@ -14,7 +15,7 @@ import urllib.request
 
 from domain.enums import ActionOutcome, ActionType
 from domain.extract import normalise_name
-from domain.policy import PROTECTED_DOMAINS
+from domain.policy import NAME_SIMILARITY, PROTECTED_DOMAINS
 from domain.schemas import ActionProposal, IncidentRecord, RawInputReport, ToolResult
 
 
@@ -90,11 +91,21 @@ def domain_age(domain: str, when: datetime) -> ToolResult:
     return ToolResult(ok=True, detail=f"{domain} was registered {days} days before the message ({source})", data={"age_days": days})
 
 
+def _similarity(left: str, right: str) -> float:
+    """How alike two names are, from 0 to 1, ignoring case, spaces and punctuation."""
+    return SequenceMatcher(None, normalise_name(left).replace(" ", ""), normalise_name(right).replace(" ", "")).ratio()
+
+
 def merchant_registry(name: str, reference: str = "", when: datetime | None = None) -> ToolResult:
     words = set(normalise_name(name).split())
     matches = [company for company in COMPANIES if words and words <= set(normalise_name(company["name"]).split())]
     if reference:
         matches = [company for company in matches if reference.startswith(company["creditor_code"])]
+    if not matches and reference:
+        # Banks shorten and garble merchant names. Find the company by the creditor code in the reference,
+        # and accept it only if the garbled name is close enough to the registered one.
+        matches = [company for company in COMPANIES if reference.startswith(company["creditor_code"])
+                   and _similarity(name, company["name"]) >= NAME_SIMILARITY]
     if not matches:
         return ToolResult(ok=False, detail=f"no registered company matches '{name}'")
     if len(matches) > 1:

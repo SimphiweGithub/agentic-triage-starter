@@ -29,6 +29,8 @@ from domain.policy import ALLOWED_SERVICE_ACTIONS, FORBIDDEN_ACTIONS
 from domain.schemas import ActionProposal, Assessment, RawInputReport
 from evaluation import clustering, evaluate, load_jsonl
 from runner import run
+from api.mailbox import poll_once, start_polling
+from api.routes import take_in_email
 from main import app
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -446,21 +448,16 @@ class ModelAndToolTests(unittest.TestCase):
         self.assertEqual((table[0.3]["caught"], table[0.3]["false_alarms"]), (1, 0))
         self.assertEqual(table[0.9]["missed"], 1)
 
-    def test_language_model_resolves_a_garbled_merchant_only_when_the_registry_confirms(self):
+    def test_garbled_merchant_is_resolved_by_creditor_code_and_name_similarity(self):
         when = parse_timestamp("2026-10-02T06:00:00")
         signals = extract_signals("Debit order of R349.00 to TECHCRE SUP ref TCS8841 on 02 Oct.", {})
-        _, unresolved = investigate(signals, when)
-        self.assertIsNone(unresolved)
-        findings, company = investigate(signals, when, lambda name: ["StreamBox", "TechCare Support"])
+        findings, company = investigate(signals, when)
         self.assertEqual(company["reg_no"], "2026/118822/07")
-        self.assertTrue(any("confirmed by the reference" in finding.note for finding in findings))
-        _, wrong = investigate(signals, when, lambda name: ["StreamBox", "TechCare Solutions"])
-        self.assertIsNone(wrong)
-        def broken(name):
-            raise TimeoutError("no answer")
-        findings, company = investigate(signals, when, broken)
-        self.assertIsNone(company)
-        self.assertTrue(any("unavailable" in finding.note for finding in findings))
+        self.assertTrue(any("retrying with reference" in finding.note for finding in findings))
+        self.assertEqual(identify_operator("techcre sup", "TCS8841"), "D-7781")
+        self.assertFalse(merchant_registry("techcre sup").ok)
+        self.assertFalse(merchant_registry("acme loans", "TCS8841").ok)
+        self.assertFalse(merchant_registry("techcre sup", "SBX1001").ok)
 
     def test_generated_warning_is_rejected_if_it_contains_a_number_or_link(self):
         class Reply:
@@ -505,6 +502,28 @@ class ApiContractTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/reviews", params={"status": "PENDING"}).json(), [])
         self.assertEqual(self.client.post(f"/api/reviews/{sms['review_id']}/decision", json={"approved": True}).status_code, 409)
         self.assertEqual(self.client.get("/api/incidents").json()[0]["status"], "CONTAINED")
+
+    def test_live_mailbox_takes_in_each_unread_email_once(self):
+        lure = self.lure.encode("utf-8")
+
+        class FakeMailbox:
+            def __init__(self): self.unread, self.closed = [b"1"], False
+            def select(self, name): return "OK", [b"1"]
+            def search(self, charset, criterion): return "OK", [b" ".join(self.unread)]
+            def fetch(self, number, parts):
+                self.unread.remove(number)
+                return "OK", [(b"1 (RFC822 {%d}" % len(lure), lure), b")"]
+            def logout(self): self.closed = True
+
+        mailbox = FakeMailbox()
+        self.assertEqual(poll_once(lambda: mailbox, take_in_email), 1)
+        self.assertTrue(mailbox.closed)
+        self.assertEqual(poll_once(lambda: mailbox, take_in_email), 0)
+        incidents = self.client.get("/api/incidents").json()
+        self.assertEqual(len(incidents), 1)
+        self.assertEqual(incidents[0]["status"], "CONTAINED")
+        self.assertIsNone(start_polling(take_in_email))
+        self.assertFalse(self.client.get("/api/health").json()["mailbox"])
 
     def test_documentation_lists_every_route_and_bad_input_is_rejected(self):
         paths = self.client.get("/openapi.json").json()["paths"]

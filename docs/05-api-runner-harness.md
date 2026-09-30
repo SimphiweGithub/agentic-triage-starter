@@ -7,17 +7,19 @@ The ways into the engine, the way to score it, and the optional model code.
 ## `main.py`
 
 - **Lines 1–9** — imports, including the router from `api/routes.py`.
-- **Line 11** — `ROOT` is the folder this file is in.
-- **Lines 12–13** — `app` is the web application, with a title and description
+- **Line 12** — `ROOT` is the folder this file is in.
+- **Lines 13–14** — `app` is the web application, with a title and description
   that appear in the generated documentation at `/docs`.
-- **Lines 17–19** — cross-origin access. `CORS_ORIGINS` is read from the
+- **Lines 18–20** — cross-origin access. `CORS_ORIGINS` is read from the
   environment and split on commas into `origins`. If the list is empty, which
   is the default, no cross-origin middleware is added and a page served from
   anywhere else cannot call the API. If addresses are listed, only those may
   call it, only with GET and POST, and only with a JSON content type.
-- **Line 21** — every route in the router is served under `/api`.
-- **Line 22** — the `static` folder is served under `/static`.
-- **Lines 25–28** — the address `/` returns a plain developer console for
+- **Line 22** — every route in the router is served under `/api`.
+- **Line 23** — start the live mailbox thread. It does nothing unless
+  `IMAP_HOST` is set.
+- **Line 24** — the `static` folder is served under `/static`.
+- **Lines 27–30** — the address `/` returns a plain developer console for
   watching the engine. The product front end is built separately.
 
 ---
@@ -26,11 +28,11 @@ The ways into the engine, the way to score it, and the optional model code.
 
 The contract for the front end is in `API.md`. This section explains the code.
 
-**Line 16** — `router` collects the endpoints.
-**Line 17** — `runtime` is the single `TriageRuntime` for the whole server. All
+**Line 17** — `router` collects the endpoints.
+**Line 18** — `runtime` is the single `TriageRuntime` for the whole server. All
 state lives in it, in memory; restarting the server clears it.
 
-### Request and response shapes (lines 20–58)
+### Request and response shapes (lines 21–59)
 
 Each class describes a JSON body. FastAPI rejects a request that does not
 fit, with error 422, before any of our code runs.
@@ -45,14 +47,16 @@ fit, with error 422, before any of our code runs.
 - `Withheld` — the reply when a message is discarded: `status` and `reason`.
 - `PersonMessage` — one warning for the person: `incident_id` and `message`.
 
-### Helpers (lines 61–71)
+### Helpers (lines 62–72)
 
-- **61–62 `_now`** — the current UTC time as text.
-- **65–71 `_take_in`** — the shared path for live intake:
-  - **67–69** — ask the domain whether the row must be withheld. If so, return
+- **62–63 `_now`** — the current UTC time as text.
+- **75–77 `take_in_email`** — one raw email in, one decision out. The API
+  route and the live mailbox both call it, so they cannot behave differently.
+- **66–72 `_take_in`** — the shared path for live intake:
+  - **68–70** — ask the domain whether the row must be withheld. If so, return
     a `Withheld` reply and store nothing.
-  - **70** — parse it safely.
-  - **71** — process it safely. A decision always comes back.
+  - **71** — parse it safely.
+  - **72** — process it safely. A decision always comes back.
 
 ### Endpoints
 
@@ -63,48 +67,87 @@ reply is sent.
 
 | Lines | Method and path | Group | What it does |
 |---|---|---|---|
-| 76–79 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
-| 82–85 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
-| 88–94 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
-| 99–102 | `GET /outbox` | person | The warnings written for the person |
-| 105–113 | `POST /incidents/{id}/feedback` | person | The person's own answer about an incident |
-| 118–121 | `GET /incidents` | caregiver | Every incident |
-| 124–134 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
-| 137–142 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
-| 145–148 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
-| 151–159 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
-| 162–170 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
-| 175–177 | `GET /health` | system | Confirms the server is up |
-| 180–184 | `GET /state` | system | Everything in one call, plus the simulated world |
-| 187–191 | `POST /reset` | system | Empty everything |
-| 194–201 | `POST /replay` | system | Reset, then process a list of reports |
-| 204–212 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 215–219 | `POST /replay/step` | system | Process the next messages in the queue |
+| 82–85 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
+| 88–91 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
+| 94–100 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
+| 105–108 | `GET /outbox` | person | The warnings written for the person |
+| 111–119 | `POST /incidents/{id}/feedback` | person | The person's own answer about an incident |
+| 124–127 | `GET /incidents` | caregiver | Every incident |
+| 130–140 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
+| 143–148 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
+| 151–154 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
+| 157–165 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
+| 168–176 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
+| 181–183 | `GET /health` | system | Confirms the server is up and reports which optional parts are on: mailbox, Jev, Gemini, live lookups |
+| 188–192 | `GET /state` | system | Everything in one call, plus the simulated world |
+| 195–199 | `POST /reset` | system | Empty everything |
+| 202–209 | `POST /replay` | system | Reset, then process a list of reports |
+| 212–220 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 223–227 | `POST /replay/step` | system | Process the next messages in the queue |
 
-**`feedback` in detail (105–113)**
-- **108–109** — unknown incident: error 404.
-- **110** — a sentence describing the answer.
-- **111–112** — the answer is wrapped as a `RawInputReport` with `source`
+**`feedback` in detail (111–119)**
+- **114–115** — unknown incident: error 404.
+- **116** — a sentence describing the answer.
+- **117–118** — the answer is wrapped as a `RawInputReport` with `source`
   `"person"`. Its metadata names the incident (so the correlator links it
   explicitly) and carries the `feedback` value.
-- **113** — it is processed like any other message. The person's answer is
+- **119** — it is processed like any other message. The person's answer is
   evidence that goes through the same policy; it is not a command.
 
-**`reviews` in detail (145–148)** — `status` is an optional query parameter.
+**`reviews` in detail (151–154)** — `status` is an optional query parameter.
 With `?status=PENDING` only reviews in that state are returned; with nothing,
 all of them.
 
-**`replay_load` in detail (204–212)**
-- **208** — strip an invisible marker from the start of the text, read the
+**`replay_load` in detail (212–220)**
+- **216** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **209–210** — an unsupported file type returns error 400.
-- **211** — parse every row safely and hand the list to the runtime's queue.
+- **217–218** — an unsupported file type returns error 400.
+- **219** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.
 
 What the API does not have: authentication, and more than one protected
 person. Both are stated limits.
+
+---
+
+## `api/mailbox.py`
+
+The optional live inbox. It reads a mailbox created for KinGuard, which the
+protected person's own mailbox forwards to. The agent never holds the
+password to their real account.
+
+### `connect_from_env` (lines 13–16)
+
+Opens an encrypted IMAP connection to `IMAP_HOST` and logs in with
+`IMAP_USER` and `IMAP_PASSWORD`, all read from the environment.
+
+### `poll_once` (lines 19–31)
+
+Arguments: `connect`, a function that returns a connection, and `handle`, a
+function given each email's raw text. Passing the connection in as a function
+is what lets the test use a fake mailbox.
+
+- **21** — connect.
+- **23** — open the inbox.
+- **24** — ask for the emails not yet read (`UNSEEN`).
+- **25** — `numbers` are their sequence numbers.
+- **26–28** — for each one, fetch the full email and pass its text to
+  `handle`. Fetching also marks it as read, so it is taken in once.
+- **29** — return how many were read.
+- **30–31** — always log out, even if something failed.
+
+### `start_polling` (lines 34–50)
+
+- **36–37** — if `IMAP_HOST` is not set, do nothing and return `None`.
+- **38** — how often to check, 15 seconds unless `IMAP_POLL_SECONDS` says otherwise.
+- **40–46 `loop`** — forever: check the mailbox, and if that fails for any
+  reason, print the error and carry on. A mailbox problem never stops the server.
+- **48–50** — run `loop` on a background thread. `daemon=True` means it stops
+  when the server stops.
+
+Not yet run against a real mailbox; the test uses a stand-in.
 
 ---
 
@@ -276,7 +319,7 @@ Enabled with `ENABLE_JEV=1`.
 | Model | Job | File | Switch |
 |---|---|---|---|
 | Jev | Seven yes/no questions and the threat type, in the gate | `domain/gate.py`, `core/jev.py` | `ENABLE_JEV=1` |
-| Gemini | Suggest full names for a garbled merchant; reword the warning | `domain/language.py`, `core/client.py` | `ENABLE_GEMINI=1` |
+| Gemini | Reword the warning shown to the person | `domain/language.py`, `core/client.py` | `ENABLE_GEMINI=1` |
 
 `domain/relation.py` and `domain/assessor.py` are older, generic hooks that
 let Gemini judge relation and assessment. KinGuard does not switch them on.

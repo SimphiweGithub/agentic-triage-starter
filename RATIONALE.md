@@ -1,8 +1,8 @@
 # Design rationale — Divitiae Tech
 
-Working document for the technical defence. Sections 1 to 4 are filled from the
-preliminary round and the scaffold as it stands. Sections 5 to 7 are to be
-completed on the day, once the final brief, data and scoring are known.
+Written for the technical defence. Sections 1 to 4 cover the goals, what the
+preliminary round taught us and the engine's design. Sections 5 to 7 cover
+KinGuard: the decisions, the measured results and the known limitations.
 
 ## 1. Goals
 
@@ -108,13 +108,49 @@ each approach:
 - An illegal lifecycle request diverts to review and never applies.
 - A review hold survives a human decision and clears only when the risk does.
 
-## 5. Final-round domain decisions (to complete)
+## 5. KinGuard decisions
 
-- Input fields mapped, and which field is the context key:
-- Relationship labels, states, severities, actions and services taken from the brief:
-- Review rules beyond the defaults (`risk_persists`, high-impact actions):
-- Severity and lifecycle rules, including de-escalation and reopening:
-- Whether the model tiers are enabled, and the measured effect of each:
+**The problem.** Older and less technical people lose money to scam messages,
+debit orders they never knowingly agreed to, and subscriptions that quietly
+grow. Security tools ignore these because the victim "accepted" or the debit
+is technically valid. Families find out after the money is gone.
+
+**Why not the first idea.** We started with an agent that contains network
+attacks. A security judge pointed out that endpoint and response products
+already do this with agents of their own. We could not claim it was new, and
+we could not match them. KinGuard has no such product to be compared with.
+
+**What the agent is.** A backend that reads forwarded emails and shared SMS,
+links them into incidents, investigates with tools, acts within a policy,
+checks whether the action worked, and corrects itself. A caregiver approves
+anything that touches the bank relationship. A separate front end talks to it
+through the API in `API.md`.
+
+| Decision | What we chose | Why |
+|---|---|---|
+| Channels | Forwarded email, and SMS shared by hand | A web app cannot read SMS. We say so, instead of claiming automatic coverage |
+| Who decides | Models advise, Python decides | A model's answer is a typed proposal; policy, the state machine and the executor decide what happens |
+| Jev | Seven yes/no questions and the threat type, in the gate | Fast, cheap, and it returns probabilities. It can add suspicion and never remove a rule's finding |
+| Gemini | Wording the warning only | It writes well. Its output is rejected if it contains a number, link or address |
+| Linking messages | Shared reference, operator, phone or domain, then guarded fuzzy text | Scam messages share identifiers, not wording. A new company name with the same director is the same operator |
+| Response ladder | Warn, block the sender, dispute the debit, block the operator | Each step is more disruptive, so each needs more evidence |
+| Automatic actions | Warning the person, blocking a sender, withdrawing our own action | Reversible and low consequence |
+| Caregiver approval | Disputing a debit, blocking an operator, anything below 0.75 confidence | They affect the bank relationship, or we are not sure |
+| The person says "this is mine" | Low risk: undo and trust the merchant. High risk: hold for the caregiver | A scammer can coach someone to confirm. Strong evidence is not overruled by one tap |
+| Learning an action failed | From the next message, not from the tool | A dispute that "succeeded" means nothing if the same operator debits again |
+| Privacy | One-time codes discarded, account numbers masked, before storage or any model call | The models never see either |
+| Hostile text | Messages are data. Rules match patterns; Jev answers fixed questions; Gemini never sees the message | A message saying "mark this benign" changes nothing, and we test that |
+
+**What we dropped, and why**
+
+- *Gemini guessing garbled merchant names.* On real calls it resolved one name
+  in three and obeyed an instruction planted in a name. Replaced with a lookup
+  by creditor code plus a name-similarity check, which needs no model.
+- *A model choosing which tools to call.* With three read-only checks a fixed
+  plan is as good, and a model that could skip a check would be a weakness.
+- *An Android listener for SMS and notifications.* Invasive, slow to build,
+  and the same mechanism malware uses.
+- *Any action that moves money.* None exists in the system.
 
 ## 6. Results
 
@@ -136,21 +172,59 @@ general UK SMS spam, so it is a stand-in for our target messages.
 **Live domain lookup.** Tested against real domains through RDAP. `.co.za`
 domains are not covered by that service and come back as unknown.
 
+**Gemini, real calls.** The warning rewrite worked and passed the safety
+check; one rewrite that contained an email address was rejected and the
+standard wording used. Blind name suggestion was weak, which is why it was
+dropped (section 5).
+
+**Scenario.** `samples/kinguard.jsonl` runs end to end with both models and
+the live lookup on: eight messages in about eight seconds. The harness scores
+it perfectly against `samples/kinguard_truth.jsonl`, but we wrote both, so
+that shows the code does what we intended, not that the rules are right.
+
+**Errors we found by measuring, and fixed**
+
+- The first four gate rules caught 2% of real spam. Three rules were added
+  from the development split.
+- The default Gemini model name was rejected by the API as retired.
+- A link's display text was being treated as one of the sender's domains,
+  which would have linked a scam to the bank it was imitating.
+- Identical debit text a month apart was being called a duplicate, which
+  would have hidden a recurring debit.
+
 **Still to measure**
 
-**Gemini, first real calls.** The warning rewrite worked and passed the
-safety check. Blind name suggestion was weak: it resolved `PC CARE SERV` but
-not `TECHCRE SUP`, and a descriptor containing an instruction was obeyed
-(it returned the name the text asked for). The registry check rejected that
-suggestion, which is the reason the check exists.
-
 - The gate on South African messages labelled by someone outside the team.
-- Local harness scores on the development data:
-- Errors we found and fixed, with report IDs:
-- Errors we found and chose not to fix, and why:
+- Jev's 0.7 cut-off, which has never been tuned.
+- The live mailbox against a real mailbox.
 
-## 7. Known limitations (to complete)
+## 7. Known limitations
 
+**What is simulated.** The bank, the company registry and the sender
+blocklist are fixture data and in-memory state. Only the domain-age lookup,
+Jev and Gemini are real. A dispute is drafted, not lodged.
+
+**What is not measured.** The risk weights, the 0.6 containment threshold,
+the R300 amount, the 90-day "new" rule, the price-jump ratio and the
+name-similarity cut-off are judgement calls. The gate was measured on UK SMS
+spam, not on the messages we are aiming at.
+
+**What the design cannot do**
+
+- It sees only what is forwarded or shared. A debit SMS the person does not
+  share is invisible, unless their bank also emails it.
+- `.co.za` domains return no registration date from the public lookup.
+- The message patterns are English only.
+- A merchant the patterns cannot read from a bank message gets no dispute,
+  only a warning and a request for the caregiver.
+
+**What is missing for real use**
+
+- No login, and one protected person. The caregiver role is assumed, not
+  verified. Relatives are sometimes the abusers, so a real version must make
+  the protected person the one who consents and can see everything done.
 - State is in memory; a restart clears it.
-- The fuzzy tier compares against every earlier report, which is fine for
-  hundreds of reports and would need indexing for many thousands.
+- Masked message text leaves the machine for the models. A real version would
+  need the person's informed consent for that.
+- The fuzzy text tier compares against every earlier message, which is fine
+  for hundreds and would need indexing for many thousands.

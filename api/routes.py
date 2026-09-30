@@ -1,5 +1,6 @@
 """The HTTP API. Every route is under /api. Interactive documentation is served at /docs."""
 from datetime import datetime, timezone
+import os
 from pathlib import PurePath
 
 from fastapi import APIRouter, HTTPException
@@ -71,12 +72,17 @@ def _take_in(row: dict) -> DecisionRecord | Withheld:
     return runtime.process_safely(report, error)
 
 
+def take_in_email(raw: str) -> DecisionRecord | Withheld:
+    """One raw email, from the API or from the live mailbox."""
+    return _take_in(email_to_row(raw))
+
+
 # ---- intake: how messages get in ----
 
 @router.post("/intake/email", tags=["intake"], response_model=DecisionRecord | Withheld)
 def intake_email(upload: EmailUpload):
     """A forwarded or saved email, as raw .eml text."""
-    return _take_in(email_to_row(upload.content))
+    return take_in_email(upload.content)
 
 
 @router.post("/intake/share", tags=["intake"], response_model=DecisionRecord | Withheld)
@@ -174,7 +180,9 @@ def move_state(incident_id: str, request: StateRequest):
 
 @router.get("/health", tags=["system"])
 def health():
-    return {"status": "ok"}
+    """Confirms the server is up and says which optional parts are switched on."""
+    return {"status": "ok", "mailbox": bool(os.getenv("IMAP_HOST")), "jev": os.getenv("ENABLE_JEV") == "1",
+            "gemini": os.getenv("ENABLE_GEMINI") == "1", "live_lookups": os.getenv("KINGUARD_LIVE_LOOKUPS") == "1"}
 
 
 @router.get("/state", tags=["system"])

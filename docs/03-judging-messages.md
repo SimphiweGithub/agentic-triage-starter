@@ -5,12 +5,11 @@ Five files decide what a message means and what to do about it:
 1. `domain/gate.py` — a fast first look, with rules and an optional decision model (Jev).
 2. `domain/tools.py` — the tools, and the outside world they act on.
 3. `domain/investigate.py` — calls the read-only tools to gather evidence.
-4. `domain/language.py` — the two language jobs given to Gemini.
+4. `domain/language.py` — the one language job given to Gemini.
 5. `domain/logic.py` — puts it together and produces an `Assessment`.
 
 Who does what: **Jev** answers narrow yes/no questions quickly. **Gemini**
-handles language: guessing what a garbled name stands for, and wording a
-warning. **Python** makes every decision.
+words the warning shown to the person. **Python** makes every decision.
 
 The output is only a **proposal**. Whether it happens is decided in
 `04-engine.md`.
@@ -156,9 +155,9 @@ What this does and does not show:
 
 ## `domain/tools.py`
 
-### The world (lines 21–35)
+### The world (lines 22–36)
 
-- **Lines 21–28 `World`** — one object holding all outside state:
+- **Lines 22–29 `World`** — one object holding all outside state:
   - `outbox` — warnings shown to the person.
   - `flagged` — senders and domains the mail filter blocks.
   - `disputes` — company registration number mapped to the dispute text.
@@ -166,133 +165,147 @@ What this does and does not show:
   - `trusted` — merchants the person confirmed as their own. This is the
     agent's memory across incidents.
   - `debits` — for each merchant, the amounts seen so far.
-- **Line 31 `WORLD`** — the single shared instance.
-- **Lines 34–35 `reset_world`** — re-runs the initialiser, emptying everything.
+- **Line 32 `WORLD`** — the single shared instance.
+- **Lines 35–36 `reset_world`** — re-runs the initialiser, emptying everything.
 
-### Fixture data (lines 39–50)
+### Fixture data (lines 40–51)
 
 Stand-ins for registries we cannot query. All names and domains are fictional.
 
-- **Lines 39–42 `DOMAIN_REGISTERED`** — domain to registration date. Used when
+- **Lines 40–43 `DOMAIN_REGISTERED`** — domain to registration date. Used when
   the live lookup is off or has no answer.
-- **Lines 45–50 `COMPANIES`** — for each company: `name`, `reg_no`,
+- **Lines 46–51 `COMPANIES`** — for each company: `name`, `reg_no`,
   `registered` date, `creditor_code` (the short code its debit references
   start with), and `director` (the person registered as controlling it).
   `TechCare Support` and `PC Care Services` have different names and codes but
   the same director, `D-7781`. That shared director is what makes them one
   operator.
 
-### Date helpers (lines 53–59)
+### Date helpers (lines 54–60)
 
-- **53–54 `_days_between`** — days from a registration date to the message.
-- **57–59 `_parse_date`** — text to a date-time, assuming UTC if no zone is given.
+- **54–55 `_days_between`** — days from a registration date to the message.
+- **58–60 `_parse_date`** — text to a date-time, assuming UTC if no zone is given.
 
-### `_live_registration` (lines 64–78) — a real lookup
+### `_live_registration` (lines 65–79) — a real lookup
 
 Asks RDAP, the public service that holds domain registration records. Only
 the domain name is sent; nothing about the person or the message.
 
-- **66** — split the domain into its `labels` (`mail`, `shop`, `example`).
-- **67** — try the full name first, then drop leading labels, so
+- **67** — split the domain into its `labels` (`mail`, `shop`, `example`).
+- **68** — try the full name first, then drop leading labels, so
   `mail.shop.example` falls back to `shop.example`.
-- **68–69** — build the request with headers that identify the client.
-- **70–72** — send it with a 6-second timeout and read the `events` list.
-- **73–74** — a network failure, a "not found", or an unreadable reply moves
+- **69–70** — build the request with headers that identify the client.
+- **71–73** — send it with a 6-second timeout and read the `events` list.
+- **74–75** — a network failure, a "not found", or an unreadable reply moves
   on to the next attempt. Nothing is raised.
-- **75–77** — return the date of the `registration` event.
-- **78** — nothing found: `None`.
+- **76–78** — return the date of the `registration` event.
+- **79** — nothing found: `None`.
 
 Known limit: some registries, including `.co.za`, do not answer RDAP. Those
 domains come back as unknown.
 
-### `domain_age` (lines 81–90)
+### `domain_age` (lines 82–91)
 
-- **82** — start with no date.
-- **83–84** — if `KINGUARD_LIVE_LOOKUPS=1`, try the real lookup.
-- **85–86** — **fallback**: if the live lookup is off, failed, or had no
+- **83** — start with no date.
+- **84–85** — if `KINGUARD_LIVE_LOOKUPS=1`, try the real lookup.
+- **86–87** — **fallback**: if the live lookup is off, failed, or had no
   record, use the fixture table. This is a real tool failing and the agent
   carrying on with a second source.
-- **87–88** — still nothing: `ok=False`. The caller must cope with not knowing.
-- **89–90** — return the age in days, and say which source answered.
+- **88–89** — still nothing: `ok=False`. The caller must cope with not knowing.
+- **90–91** — return the age in days, and say which source answered.
 
-### `merchant_registry` (lines 93–105)
+### `_similarity` (lines 94–96)
 
-- **94** — `words` are the words of the normalised name.
-- **95** — `matches` are companies whose name contains **all** those words
+How alike two names are, from 0 to 1. Both are lower-cased and stripped of
+spaces and punctuation first, then compared character by character with
+`SequenceMatcher`. `TECHCRE SUP` against `TechCare Support` scores 0.80;
+against `PC Care Services` it scores 0.42.
+
+### `merchant_registry` (lines 99–116)
+
+- **100** — `words` are the words of the normalised name.
+- **101** — `matches` are companies whose name contains **all** those words
   (`words <= ...` means "is a subset of"). `techcare` matches two companies;
   `techcare support` matches one.
-- **96–97** — if a `reference` was given, keep only companies whose
+- **102–103** — if a `reference` was given, keep only companies whose
   `creditor_code` starts it.
-- **98–99** — none left: fail.
-- **100–102** — more than one left: fail as ambiguous, and report how many
+- **104–108** — **the garbled-name fallback.** If nothing matched and there
+  is a reference, look the other way round: take every company whose
+  `creditor_code` starts the reference, and keep it only if the name on the
+  statement is at least `NAME_SIMILARITY` like the registered name. Banks
+  shorten names (`TECHCRE SUP` for TechCare Support), so an exact word match
+  is too strict; the creditor code finds the company and the similarity check
+  stops an unrelated name from riding on someone else's code.
+- **109–110** — none left: fail.
+- **111–113** — more than one left: fail as ambiguous, and report how many
   `candidates` there were. That number tells the caller a retry with more
   information is worth trying.
-- **103–105** — exactly one: copy it, add `age_days`, return it.
+- **114–116** — exactly one: copy it, add `age_days`, return it.
 
-### `identify_operator` (lines 108–113)
+### `identify_operator` (lines 119–124)
 
 Returns the director behind a merchant, or an empty string.
 
-- **110** — look up by name.
-- **111–112** — if that failed and there is a reference, retry with it.
-- **113** — return the `director` on success.
+- **121** — look up by name.
+- **122–123** — if that failed and there is a reference, retry with it.
+- **124** — return the `director` on success.
 
-### `mandate_history` (lines 116–120)
+### `mandate_history` (lines 127–131)
 
-- **117** — `previous` debit amounts from this merchant.
-- **118** — `ratio` of this amount to the last one, or `None`.
-- **119–120** — report whether it is the first debit and the ratio.
+- **128** — `previous` debit amounts from this merchant.
+- **129** — `ratio` of this amount to the last one, or `None`.
+- **130–131** — report whether it is the first debit and the ratio.
 
-### Action tools — they change the world (lines 125–176)
+### Action tools — they change the world (lines 136–187)
 
 Every action tool takes the same three arguments (`action`, `incident`,
 `report`) and returns a `ToolResult`.
 
-**`warn_person` (125–127)** — puts the message in the outbox.
+**`warn_person` (136–138)** — puts the message in the outbox.
 
-**`flag_sender` (130–138)**
-- **131** — `target` is what to block.
-- **132–133** — nothing to block: fail.
-- **134–135** — the target is a shared mail provider: **refuse**, and mark the
+**`flag_sender` (141–149)**
+- **142** — `target` is what to block.
+- **143–144** — nothing to block: fail.
+- **145–146** — the target is a shared mail provider: **refuse**, and mark the
   result `protected`. The tool enforces this itself, so it holds even if
   whatever proposed the action got it wrong.
-- **136–138** — otherwise add it to the filter, warn the person, succeed.
+- **147–149** — otherwise add it to the filter, warn the person, succeed.
 
-**`draft_dispute` (141–148)**
-- **142–144** — without a registration number the dispute has nobody to be
+**`draft_dispute` (152–159)**
+- **153–155** — without a registration number the dispute has nobody to be
   addressed to: fail.
-- **145–146** — build the dispute text.
-- **147–148** — store it and succeed.
+- **156–157** — build the dispute text.
+- **158–159** — store it and succeed.
 
-**`block_operator` (151–157)**
-- **152–154** — without an identified operator there is nothing to block: fail.
-- **155** — add the director to `blocked`.
-- **156–157** — report every company name that director controls.
+**`block_operator` (162–168)**
+- **163–165** — without an identified operator there is nothing to block: fail.
+- **166** — add the director to `blocked`.
+- **167–168** — report every company name that director controls.
 
-**`withdraw` (160–176)** — the rollback.
-- **162** — `undone` collects what was reversed.
-- **163–165** — look only at actions that actually ran (`EXECUTED`).
-- **166–168** — a sender flag is removed from the filter.
-- **169–171** — a dispute is removed.
-- **172–175** — the merchant is added to `trusted` and that is noted.
-- **176** — always succeeds; says "nothing to undo" if that was the case.
+**`withdraw` (171–187)** — the rollback.
+- **173** — `undone` collects what was reversed.
+- **174–176** — look only at actions that actually ran (`EXECUTED`).
+- **177–179** — a sender flag is removed from the filter.
+- **180–182** — a dispute is removed.
+- **183–186** — the merchant is added to `trusted` and that is noted.
+- **187** — always succeeds; says "nothing to undo" if that was the case.
 
-### The registry of tools (lines 179–186)
+### The registry of tools (lines 190–197)
 
 `ACTION_TOOLS` maps each `ActionType` to the function that carries it out.
 The engine looks actions up here. An action with no entry cannot run.
 
-### `correct` (lines 189–194)
+### `correct` (lines 200–205)
 
 Given an action that failed and its result, return a corrected action to try
 next, or `None` to hand over to a human.
 
-- **191** — the sender address from the message's signals.
-- **192–193** — if a `FLAG_SENDER` was refused as `protected`, and there is a
+- **202** — the sender address from the message's signals.
+- **203–204** — if a `FLAG_SENDER` was refused as `protected`, and there is a
   sender address that has not been tried, return the same action with the
   target narrowed to that one address. `model_copy(update=...)` makes a copy
   with one field changed.
-- **194** — any other failure has no known correction.
+- **205** — any other failure has no known correction.
 
 The rules in `logic.py` already choose the address for a shared provider, so
 this path is a second line of defence. It matters when something else
@@ -308,75 +321,61 @@ One piece of evidence: the `source` tool, the `weight` it adds to the risk,
 a `note` in words, and `reassuring` — true when it points towards a
 legitimate sender.
 
-### `investigate` (lines 18–70)
+### `investigate` (lines 18–58)
 
-Arguments: the `signals`, `when` the message was sent, and an optional
-`suggest_names` function (Gemini). Returns the list of findings and the
-merchant's registry record if it was identified (`company`).
+Arguments: the `signals` and `when` the message was sent. Returns the list of
+findings and the merchant's registry record if it was identified (`company`).
 
-**Domains (lines 24–33)**
-- **25–26** — skip shared mail providers; their age says nothing.
-- **27** — call `domain_age`.
-- **28–29** — unknown: recorded with weight 0.
-- **30–31** — younger than `YOUNG_DAYS`: +0.3.
-- **32–33** — older: weight 0 and marked reassuring.
+**Domains (lines 23–32)**
+- **24–25** — skip shared mail providers; their age says nothing.
+- **26** — call `domain_age`.
+- **27–28** — unknown: recorded with weight 0.
+- **29–30** — younger than `YOUNG_DAYS`: +0.3.
+- **31–32** — older: weight 0 and marked reassuring.
 
-**Merchant (lines 35–59)**
-- **36** — look the merchant up by name.
-- **37–40** — **self-correction, first kind.** The lookup failed because the
-  name was ambiguous (`candidates` is set) and the message has a payment
-  reference: record that, and look up again with the reference.
-- **41–51** — **self-correction, second kind.** The name matched nothing at
-  all, there is a reference, and a language model is available:
-  - **44** — ask the model what the garbled name could stand for.
-  - **45** — look each suggestion up **together with the reference**.
-  - **46–49** — accept the first suggestion the registry confirms, record how
-    it was resolved, and stop.
-  - **50–51** — if the model fails, note it and carry on.
+**Merchant (lines 34–47)**
+- **35** — look the merchant up by name.
+- **36–39** — **self-correction.** The lookup failed, either because the name
+  was ambiguous or because it matched nothing, and the message has a payment
+  reference. Record what went wrong, then look again with the reference. The
+  registry then narrows an ambiguous name, or resolves a garbled one through
+  the creditor code.
+- **40–41** — still not identified: +0.1.
+- **42–44** — identified and newly registered: keep the record, +0.25.
+- **45–47** — identified and established: keep the record, reassuring.
 
-  The guess is never trusted by itself. A suggestion counts only if a real
-  company exists with that name **and** its creditor code matches the payment
-  reference. A wrong or manipulated guess simply finds nothing.
-- **52–53** — still not identified: +0.1.
-- **54–56** — identified and newly registered: keep the record, +0.25.
-- **57–59** — identified and established: keep the record, reassuring.
+**Debit history (lines 49–56)**
+- **51–52** — first debit ever seen from this merchant: +0.2.
+- **53–54** — at least `JUMP_RATIO` times the previous amount: +0.35.
+- **55–56** — otherwise reassuring.
 
-**Debit history (lines 61–68)**
-- **63–64** — first debit ever seen from this merchant: +0.2.
-- **65–66** — at least `JUMP_RATIO` times the previous amount: +0.35.
-- **67–68** — otherwise reassuring.
+An earlier version asked Gemini to guess what a garbled name stood for. On
+real calls it was unreliable and followed an instruction planted in a name,
+so it was replaced with the creditor-code lookup above, which needs no model.
 
 ---
 
 ## `domain/language.py`
 
-The only place Gemini is used by KinGuard. Two functions; both return text
-that Python checks before using.
+The only place Gemini is used by KinGuard: one function, whose output Python
+checks before using.
 
-- **Line 14 `PROMPTS`** — the folder holding the prompt files.
-- **Lines 17–18 `NameSuggestions`** — the shape Gemini must return for names:
-  a list of strings.
-- **Lines 21–22 `PersonMessage`** — the shape for a warning: one string.
+- **Line 13 `PROMPTS`** — the folder holding the prompt files.
+- **Lines 16–17 `PersonMessage`** — the shape Gemini must return: one string.
 
-### `suggest_merchant_names` (lines 25–28)
+### `write_person_message` (lines 20–26)
 
-- **27** — the prompt is the instructions in `prompts/merchant_names.md` plus
-  the descriptor. `{descriptor!r}` writes it in quotes so it reads as data.
-- **28** — call Gemini, strip each name, drop empty ones, keep at most three.
-
-### `write_person_message` (lines 31–37)
-
-- **33** — the prompt is `prompts/person_message.md` plus a list of facts we
+- **22** — the prompt is `prompts/person_message.md` plus a list of facts we
   chose. The scam message itself is never included.
-- **34** — call Gemini and tidy the whitespace.
-- **35–36** — **the safety check.** The message is rejected if it is empty,
+- **23** — call Gemini and tidy the whitespace.
+- **24–25** — **the safety check.** The message is rejected if it is empty,
   longer than 400 characters, or contains a link, an email address or a phone
   number. A warning that told the person to call a number would be exactly
   what a scammer wants, so the check is in code, not only in the prompt.
-- **37** — return the message.
+- **26** — return the message.
 
-Both raise on any failure. Their callers catch that and fall back: the
-investigation carries on without suggestions, and the standard warning is used.
+It raises on any failure. The caller catches that and uses the standard
+warning instead.
 
 ---
 
@@ -468,8 +467,7 @@ Called once per message. Returns an `Assessment`.
 - **125** — `verdict` from the gate. `ask_jev` is passed only when
   `ENABLE_JEV=1`; otherwise the gate runs on rules alone.
 - **126–129** — investigate if it is a debit or if the gate score reached
-  `GATE_THRESHOLD`. `suggest_merchant_names` is passed only when
-  `ENABLE_GEMINI=1`.
+  `GATE_THRESHOLD`.
 - **130–131** — remember this debit's amount for next time, after the
   investigation, so the debit is not compared with itself.
 

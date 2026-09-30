@@ -1,7 +1,7 @@
 """Gather evidence about a suspicious message by calling the read-only tools."""
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from domain.policy import JUMP_RATIO, PROTECTED_DOMAINS, YOUNG_DAYS
 from domain.tools import domain_age, mandate_history, merchant_registry
@@ -15,8 +15,7 @@ class Finding:
     reassuring: bool = False  # true when the finding points towards a legitimate sender
 
 
-def investigate(signals: dict[str, Any], when: datetime,
-                suggest_names: Callable[[str], list[str]] | None = None) -> tuple[list[Finding], dict[str, Any] | None]:
+def investigate(signals: dict[str, Any], when: datetime) -> tuple[list[Finding], dict[str, Any] | None]:
     """Returns the findings and, when the merchant was identified, its registry record."""
     findings: list[Finding] = []
     company = None
@@ -34,21 +33,10 @@ def investigate(signals: dict[str, Any], when: datetime,
 
     if signals["merchant"]:
         result = merchant_registry(signals["merchant"], when=when)
-        if not result.ok and result.data.get("candidates") and signals["reference"]:
-            # Self-correction: the name alone was ambiguous, so narrow it with the payment reference.
+        if not result.ok and signals["reference"]:
+            # Self-correction: the name alone was ambiguous or unknown, so look again using the payment reference.
             findings.append(Finding("merchant_registry", 0.0, f"{result.detail}; retrying with reference {signals['reference']}"))
             result = merchant_registry(signals["merchant"], signals["reference"], when)
-        if not result.ok and not result.data.get("candidates") and signals["reference"] and suggest_names is not None:
-            # Self-correction with the language model: the name matched nothing, so ask what it could stand for.
-            try:
-                for name in suggest_names(signals["merchant"]):
-                    attempt = merchant_registry(name, signals["reference"], when)
-                    if attempt.ok:  # accepted only because the registry confirms it against the payment reference
-                        findings.append(Finding("merchant_registry", 0.0, f"{result.detail}; '{name}' suggested by the language model and confirmed by the reference"))
-                        result = attempt
-                        break
-            except Exception as error:  # the investigation must work without the model
-                findings.append(Finding("merchant_registry", 0.0, f"name suggestion unavailable ({type(error).__name__})"))
         if not result.ok:
             findings.append(Finding("merchant_registry", 0.1, result.detail))
         elif result.data["age_days"] < YOUNG_DAYS:

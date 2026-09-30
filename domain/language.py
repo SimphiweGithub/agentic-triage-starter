@@ -1,12 +1,11 @@
-"""The two language jobs given to Gemini. Both return text that Python checks before using it.
+"""The one language job given to Gemini: wording a warning kindly. Python checks the text before using it.
 
-Gemini does not classify, score, choose actions or change state here. It
-helps where rules are weak: reading a garbled merchant name, and wording a
-warning kindly. Each function raises on failure and the caller falls back.
+Gemini does not classify, score, choose actions or change state here. The
+function raises on failure and the caller falls back to the standard wording.
 """
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from core.client import call_agent_structured
 from domain.extract import EMAIL_PATTERN, PHONE_PATTERN, URL_PATTERN
@@ -14,18 +13,8 @@ from domain.extract import EMAIL_PATTERN, PHONE_PATTERN, URL_PATTERN
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 
 
-class NameSuggestions(BaseModel):
-    names: list[str] = Field(default_factory=list)
-
-
 class PersonMessage(BaseModel):
     message: str
-
-
-def suggest_merchant_names(descriptor: str) -> list[str]:
-    """Bank statements shorten merchant names. Ask for up to three full company names the descriptor could stand for."""
-    prompt = (PROMPTS / "merchant_names.md").read_text(encoding="utf-8") + f"\n\nDescriptor: {descriptor!r}"
-    return [name.strip() for name in call_agent_structured(prompt, NameSuggestions).names if name.strip()][:3]
 
 
 def write_person_message(facts: dict[str, str]) -> str:

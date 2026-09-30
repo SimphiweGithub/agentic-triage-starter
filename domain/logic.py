@@ -7,7 +7,7 @@ from domain.enums import ActionOutcome, ActionType, IncidentState, ServiceDomain
 from domain.extract import extract_signals, is_one_time_code, redact
 from domain.gate import ask_jev, gate
 from domain.investigate import investigate
-from domain.language import suggest_merchant_names, write_person_message
+from domain.language import write_person_message
 from domain.policy import CONTAIN_THRESHOLD, GATE_THRESHOLD, HIGH_AMOUNT, PROTECTED_DOMAINS, REVIEW_HOLD_SEVERITIES
 from domain.schemas import ActionProposal, Assessment, IncidentRecord, RawInputReport
 from domain.tools import WORLD, identify_operator
@@ -126,7 +126,7 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     findings, company = [], None
     if is_debit or verdict.score >= GATE_THRESHOLD:
         when = parse_timestamp(report.timestamp) or datetime.now(timezone.utc)
-        findings, company = investigate(signals, when, suggest_merchant_names if os.getenv("ENABLE_GEMINI") == "1" else None)
+        findings, company = investigate(signals, when)
     if is_debit:
         WORLD.debits.setdefault(signals["merchant"], []).append(signals["amount"])
 

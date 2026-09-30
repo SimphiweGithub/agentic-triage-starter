@@ -60,7 +60,9 @@ All off by default. Set them as environment variables before starting the server
 |---|---|
 | `KINGUARD_LIVE_LOOKUPS=1` | Domain age is looked up for real through RDAP, falling back to fixture data. Tested against live domains; `.co.za` is not covered by RDAP. |
 | `ENABLE_JEV=1` with `TYPESAFE_API_KEY` | The gate also asks Jev four yes/no questions and the threat type. Jev can add suspicion, never remove it. Measured on held-out SMS: rules alone caught 53%, rules plus Jev 87%. |
-| `ENABLE_GEMINI=1` with `GEMINI_API_KEY` | Gemini suggests full names for a garbled merchant descriptor (accepted only if the registry confirms them against the payment reference) and rewords the warning shown to the person (rejected if it contains a number or link). `GEMINI_MODEL` is optional (default `gemini-3.5-flash-lite`). Run against the real API; name suggestion is unreliable on its own. |
+| `ENABLE_GEMINI=1` with `GEMINI_API_KEY` | Gemini rewords the warning shown to the person. The result is rejected if it contains a number, link or address. `GEMINI_MODEL` is optional (default `gemini-3.5-flash-lite`). |
+
+| `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD` | A live inbox: unread emails in a mailbox created for KinGuard are taken in every `IMAP_POLL_SECONDS` (default 15). Tested with a stand-in mailbox only. |
 
 Every model call has a rule-based fallback, and model output passes through the same state machine, guardrails and executor as the rules.
 
