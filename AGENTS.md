@@ -1,6 +1,6 @@
-# Divitiae Tech agentic triage starter
+# KinGuard backend
 
-The final intercampus hackathon brief and data are not yet known. This repository is a generic starter. The previous campus qualifier is historical context, not the final domain.
+KinGuard protects an older or digitally vulnerable person from scam messages, predatory debit orders and subscription creep. This repository is the backend only; the front end is built separately against `API.md`.
 
 ## Git attribution
 
@@ -8,14 +8,18 @@ Never add a `Co-Authored-By: Codex ...` trailer or any other self-attribution to
 
 ## Architecture
 
-- Serve `/api/...` and `/static/...` from the same FastAPI process on port 8000. Use the single HTML dashboard with Tailwind and Alpine.js. Do not add CORS or a separate frontend build.
-- Keep challenge-specific schemas, enums, parsing, assessment rules, action registries, and transition graphs in `domain/`. Keep model prompts in `prompts/`. Adapt `runner.py` when the judges reveal the input transport or exact output contract.
+- One FastAPI process serves `/api/...`. `static/index.html` is a developer console, not the product front end. Cross-origin access is off unless `CORS_ORIGINS` lists the front end's address.
+- Models advise, Python decides. Jev answers yes/no questions in the gate (`domain/gate.py`); Gemini does two language jobs (`domain/language.py`); every model call has a rule-based fallback.
 - Run every lifecycle request through `core/fsm.py`. Illegal transitions enter `PENDING_REVIEW`.
-- Run every proposed action through `core/guardrails.py`. Destructive, high-impact, forbidden, mismatched service/action, and confidence below `0.75` require human review. No external action executor is connected until the final domain and authorization rules are known.
-- Keep clickable links among raw reports, incident masters, decision traces, action proposals, and reviews.
+- Run every action through `core/executor.py`, which gates each attempt with `core/guardrails.py`. High-impact, forbidden, mismatched and low-confidence actions wait for the caregiver.
+- Matching text alone never makes a duplicate. `core/correlator.py` links by explicit link, shared identifier, then guarded fuzzy text.
+- Human review is a hold on the incident. It clears only when no review is pending and `domain.logic.risk_persists` returns false.
+- One decision per kept input row. Parse and processing failures become `PENDING_REVIEW` decisions. One-time codes are discarded before storage.
+- Keep domain rules, thresholds and tools in `domain/`; keep `core/` domain-neutral.
 
-## Qualifier lessons
+## Working rules
 
-The qualifier scored 49.79/60 automated with full coverage and 24/25 qualitative. Largest losses were action/service selection, correlation labels, and safety triggers; lifecycle and dashboard linking also need attention. Use fuzzy matching as a candidate filter and an optional structured Gemini relation classifier as the second tier. The model can advise, but typed schemas, action policy, and the FSM control persisted decisions.
-
-When the final brief arrives, configure `domain/enums.py`, `schemas.py`, `logic.py`, and `policy.py`; update `prompts/relation.md` and the runner adapter; then run tests and evaluate ordered coverage, state validity, duplicate suppression, forbidden-action review, changing evidence, and UI links. Record the trade-offs and edge cases for the technical defence.
+- Every backend file is explained line by line in `docs/01` to `docs/05`. When code changes, update the matching walkthrough and its line numbers.
+- Measure before tuning. Use `calibrate.py` with a held-out split and `evaluation.py --truth`; record results in `RATIONALE.md`.
+- Tests never call the real model APIs. They set `KINGUARD_SKIP_ENV_FILE=1`.
+- Keys live only in `.env`, which git ignores.

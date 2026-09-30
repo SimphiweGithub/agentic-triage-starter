@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from domain.enums import ActionType, IncidentState, Relationship, ServiceDomain, SeverityLevel
+from domain.enums import ActionOutcome, ActionType, IncidentState, Relationship, ServiceDomain, SeverityLevel
 
 
 class RawInputReport(BaseModel):
@@ -21,12 +21,28 @@ class ActionProposal(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class ToolResult(BaseModel):
+    ok: bool
+    detail: str = ""
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ActionRecord(BaseModel):
+    report_id: str
+    action: ActionProposal
+    outcome: ActionOutcome
+    detail: str = ""
+
+
 class Assessment(BaseModel):
     severity: SeverityLevel
     confidence: float = Field(ge=0, le=1)
     requested_state: IncidentState
     proposed_action: ActionProposal | None = None
     rationale: str
+    # Set when the evidence itself needs a human (conflict, uncertainty), with or without an action.
+    review_reason: str | None = None
+    labels: dict[str, str] = Field(default_factory=dict)
 
 
 class IncidentRecord(BaseModel):
@@ -37,6 +53,10 @@ class IncidentRecord(BaseModel):
     report_ids: list[str] = Field(default_factory=list)
     summary: str = ""
     updated_at: str = ""
+    # Sticky: stays set after a review trigger until domain.logic.risk_persists says the risk is gone.
+    review_hold: str | None = None
+    actions: list[ActionRecord] = Field(default_factory=list)
+    labels: dict[str, str] = Field(default_factory=dict)
 
 
 class DecisionRecord(BaseModel):
@@ -47,8 +67,14 @@ class DecisionRecord(BaseModel):
     severity: SeverityLevel
     confidence: float = Field(ge=0, le=1)
     proposed_action: ActionProposal | None = None
+    action_outcome: ActionOutcome = ActionOutcome.NONE
+    suppressed_action: ActionProposal | None = None
     requires_human_approval: bool
     review_id: str | None = None
+    previous_status: IncidentState | None = None
+    previous_severity: SeverityLevel | None = None
+    previous_confidence: float | None = None
+    labels: dict[str, str] = Field(default_factory=dict)
     trace: list[str] = Field(default_factory=list)
 
 

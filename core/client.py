@@ -16,7 +16,7 @@ def _generate(prompt: str, schema: type[T], api_key: str):
     client = genai.Client(api_key=api_key)
     try:
         return client.models.generate_content(
-            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+            model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
             contents=prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema, temperature=0.1),
         )

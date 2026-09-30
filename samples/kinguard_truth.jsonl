@@ -1,0 +1,8 @@
+{"report_id": "K01", "event_id": "techcare", "relationship": "NEW", "severity": "HIGH", "human_review": false, "actions": [{"type": "FLAG_SENDER", "service": "MAIL_FILTER"}]}
+{"report_id": "K02", "event_id": "techcare", "relationship": "DUPLICATE", "severity": "HIGH", "human_review": false, "actions": []}
+{"report_id": "K04", "event_id": "techcare", "relationship": "RELATED", "severity": "HIGH", "human_review": true, "actions": [{"type": "DRAFT_DISPUTE", "service": "BANK"}]}
+{"report_id": "K05", "event_id": "streambox", "relationship": "NEW", "severity": "LOW", "human_review": false, "actions": []}
+{"report_id": "K06", "event_id": "prize", "relationship": "NEW", "severity": "MEDIUM", "human_review": false, "actions": [{"type": "FLAG_SENDER", "service": "MAIL_FILTER"}]}
+{"report_id": "K07", "event_id": "techcare", "relationship": "RELATED", "severity": "HIGH", "human_review": true}
+{"report_id": "K08", "event_id": "streambox", "relationship": "RELATED", "severity": "MEDIUM", "human_review": true, "actions": [{"type": "DRAFT_DISPUTE", "service": "BANK"}]}
+{"report_id": "ROW-00008", "event_id": "unreadable", "human_review": true}

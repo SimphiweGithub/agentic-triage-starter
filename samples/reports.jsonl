@@ -1,0 +1,10 @@
+{"report_id": "S01", "timestamp": "2026-10-01T09:00:00", "source": "sensor", "payload": "Pressure dropping on line 3", "metadata": {"context": "Pump room A"}}
+{"report_id": "S02", "timestamp": "2026-10-01T09:02:00", "source": "sensor", "payload": "Pressure dropping on line 3", "metadata": {"context": "Pump room A"}}
+{"report_id": "S03", "timestamp": "2026-10-01T09:05:00", "source": "sensor", "payload": "Pressure dropping on line 3", "metadata": {"context": "Pump room B"}}
+{"report_id": "S04", "timestamp": "2026-10-01T09:06:00", "source": "sensor", "payload": "Pressure still dropping on line 3, now below threshold", "metadata": {"context": "Pump room A"}}
+{"report_id": "S05", "timestamp": "2026-10-01T09:10:00", "source": "operator", "payload": "Badge reader offline at the north gate"}
+{"report_id": "S06", "timestamp": "2026-10-03T16:30:00", "source": "operator", "payload": "Badge reader offline at the north gate"}
+{"report_id": "S07", "timestamp": "not a timestamp", "source": "operator", "payload": "Badge reader offline at the north gate again"}
+{"report_id": "", "timestamp": "2026-10-03T16:40:00", "source": "operator", "payload": "Row with no report id"}
+this line is not JSON
+{"report_id": "S10", "timestamp": "2026-10-03T16:45:00", "source": "sensor", "payload": "Coolant leak detected under rack 12", "metadata": {"context": "Server hall"}}

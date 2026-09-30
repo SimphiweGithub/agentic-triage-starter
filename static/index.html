@@ -6,53 +6,269 @@
   <title>Agentic Triage Starter</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-  <style>[x-cloak]{display:none!important}body{background:#020617;color:#e2e8f0;font-family:system-ui,sans-serif}.panel{background:#0f172a;border:1px solid #334155;border-radius:12px;padding:16px}.row{display:block;width:100%;text-align:left;border-bottom:1px solid #334155;padding:8px}.row:hover,.selected{background:#1e293b}.btn{background:#1e293b;border:1px solid #64748b;border-radius:6px;padding:6px 10px}.link{color:#67e8f9;text-decoration:underline}.scroll{max-height:240px;overflow:auto}.detail{border-top:1px solid #334155;margin-top:12px;padding-top:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}</style>
+  <style>
+    [x-cloak]{display:none!important}
+    body{background:#020617;color:#e2e8f0;font-family:system-ui,sans-serif}
+    .panel{background:#0f172a;border:1px solid #334155;border-radius:12px;padding:16px}
+    .row{display:block;width:100%;text-align:left;border-bottom:1px solid #334155;padding:8px}
+    .row:hover,.selected{background:#1e293b}
+    .btn{background:#1e293b;border:1px solid #64748b;border-radius:6px;padding:6px 10px}
+    .btn:disabled{opacity:.4;cursor:not-allowed}
+    .btn.on{background:#155e75;border-color:#67e8f9}
+    .link{color:#67e8f9;text-decoration:underline}
+    .scroll{max-height:260px;overflow:auto}
+    .detail{border-top:1px solid #334155;margin-top:12px;padding-top:12px}
+    .tag{display:inline-block;border:1px solid #475569;border-radius:999px;padding:0 8px;font-size:12px;margin-right:4px}
+    .tag.warn{border-color:#f59e0b;color:#fcd34d}
+    .tag.mute{color:#94a3b8}
+    pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+    table{width:100%;font-size:13px} th{text-align:left;color:#94a3b8;font-weight:500} td,th{padding:4px 6px;border-bottom:1px solid #1e293b;vertical-align:top}
+  </style>
 </head>
 <body x-data="triageApp()" x-init="load()" x-cloak>
-  <header class="p-4 border-b border-slate-700 flex flex-wrap gap-3 items-center">
-    <div class="mr-auto"><h1 class="text-xl font-bold">Agentic Triage Starter</h1><p class="text-sm text-slate-400">Generic scaffold · no challenge policy configured</p></div>
-    <label class="btn cursor-pointer">Replay JSONL<input class="hidden" type="file" accept=".jsonl" @change="importJsonl($event)"></label>
+  <header class="p-4 border-b border-slate-700 flex flex-wrap gap-2 items-center">
+    <div class="mr-auto">
+      <h1 class="text-xl font-bold">Agentic Triage Starter</h1>
+      <p class="text-sm text-slate-400">Generic scaffold · no challenge policy configured</p>
+    </div>
+    <label class="btn cursor-pointer">Load CSV / JSONL<input class="hidden" type="file" accept=".csv,.jsonl" @change="loadFile($event)"></label>
+    <button class="btn" :disabled="!remaining()" @click="step(1)">Step</button>
+    <button class="btn" :class="playing&&'on'" :disabled="!remaining()" @click="togglePlay()" x-text="playing?'Pause':'Play'"></button>
+    <button class="btn" :disabled="!remaining()" @click="step(remaining())">Run all</button>
+    <span class="text-sm text-slate-300" x-show="replay.total" x-text="`${replay.position} / ${replay.total}`"></span>
     <button class="btn" @click="reset()">Reset</button>
   </header>
+
   <main class="p-4 max-w-screen-2xl mx-auto">
-    <p class="text-sm text-amber-300 mb-3" x-text="message || `${reports.length} reports · ${incidents.length} incidents · ${decisions.length} decisions`"></p>
+    <p class="text-sm text-amber-300 mb-3" x-text="message || `${reports.length} reports · ${incidents.length} incidents · ${decisions.length} decisions · ${pendingReviews().length} pending reviews`"></p>
+
+    <section class="panel mb-4" x-show="currentDecision()">
+      <h2 class="font-bold mb-2">Current report</h2>
+      <template x-if="currentDecision()">
+        <div>
+          <p>
+            <button class="link font-mono" @click="selectReport(currentDecision().report_id)" x-text="currentDecision().report_id"></button>
+            → <button class="link font-mono" @click="selectIncident(currentDecision().incident_id)" x-text="currentDecision().incident_id"></button>
+            <span class="tag" x-text="currentDecision().relationship"></span>
+            <span class="tag" x-text="currentDecision().status"></span>
+            <span class="tag" x-text="currentDecision().severity"></span>
+            <span class="tag" x-text="'confidence ' + currentDecision().confidence"></span>
+            <span class="tag warn" x-show="currentDecision().requires_human_approval">human review</span>
+          </p>
+          <p class="text-sm mt-1" x-text="reportById(currentDecision().report_id)?.payload"></p>
+          <p class="text-sm text-slate-400 mt-1" x-text="currentDecision().trace.join(' · ')"></p>
+        </div>
+      </template>
+    </section>
+
     <div class="grid lg:grid-cols-2 gap-4">
-      <section class="panel"><h2 class="font-bold mb-2">Raw reports</h2>
-        <div class="scroll"><template x-for="report in reports" :key="report.report_id"><button class="row" :class="selectedReport===report.report_id&&'selected'" @click="selectReport(report.report_id)"><span class="font-mono text-cyan-300" x-text="report.report_id"></span> <span x-text="report.payload"></span></button></template></div>
-        <template x-if="activeReport()"><div class="detail"><h3 class="font-semibold">Report <span x-text="selectedReport"></span></h3><pre x-text="JSON.stringify(activeReport(),null,2)"></pre><button class="link" x-show="activeDecision()" @click="selectIncident(activeDecision().incident_id)">Open linked incident →</button></div></template>
-        <div class="detail"><h3 class="font-semibold mb-2">Try one report</h3><input class="bg-slate-800 p-2 rounded w-full mb-2" placeholder="Source" x-model="draftSource"><textarea class="bg-slate-800 p-2 rounded w-full" placeholder="Payload" x-model="draftPayload"></textarea><button class="btn mt-2" @click="submit()">Ingest</button></div>
+      <section class="panel">
+        <h2 class="font-bold mb-2">Raw reports</h2>
+        <div class="scroll">
+          <template x-for="report in reports" :key="report.report_id">
+            <button class="row" :id="'report-'+report.report_id" :class="selectedReport===report.report_id&&'selected'" @click="selectReport(report.report_id)">
+              <span class="font-mono text-cyan-300" x-text="report.report_id"></span> <span x-text="report.payload"></span>
+            </button>
+          </template>
+        </div>
+        <template x-if="activeReport()">
+          <div class="detail">
+            <h3 class="font-semibold">Report <span x-text="selectedReport"></span></h3>
+            <pre x-text="JSON.stringify(activeReport(),null,2)"></pre>
+            <template x-if="activeDecision()">
+              <p class="text-sm">
+                <button class="link" @click="selectIncident(activeDecision().incident_id)">Open incident <span x-text="activeDecision().incident_id"></span> →</button>
+                <template x-if="activeDecision().review_id"><span> · review <span class="font-mono" x-text="activeDecision().review_id"></span></span></template>
+              </p>
+            </template>
+          </div>
+        </template>
+        <div class="detail">
+          <h3 class="font-semibold mb-2">Try one report</h3>
+          <input class="bg-slate-800 p-2 rounded w-full mb-2" placeholder="Source" x-model="draftSource">
+          <input class="bg-slate-800 p-2 rounded w-full mb-2" placeholder="Context (optional second merge signal)" x-model="draftContext">
+          <textarea class="bg-slate-800 p-2 rounded w-full" placeholder="Payload" x-model="draftPayload"></textarea>
+          <button class="btn mt-2" @click="submit()">Ingest</button>
+        </div>
       </section>
-      <section class="panel"><h2 class="font-bold mb-2">Incident masters</h2>
-        <div class="scroll"><template x-for="incident in incidents" :key="incident.incident_id"><button class="row" :class="selectedIncident===incident.incident_id&&'selected'" @click="selectIncident(incident.incident_id)"><span class="font-mono text-emerald-300" x-text="incident.incident_id"></span> <span x-text="incident.status + ' · ' + incident.summary"></span></button></template></div>
-        <template x-if="activeIncident()"><div class="detail"><h3 class="font-semibold">Incident <span x-text="selectedIncident"></span></h3><p x-text="activeIncident().status + ' · ' + activeIncident().severity + ' · confidence ' + activeIncident().confidence"></p><p class="mt-2 text-sm">Linked reports:</p><template x-for="id in activeIncident().report_ids" :key="id"><button class="link mr-2" @click="selectReport(id)" x-text="id"></button></template></div></template>
+
+      <section class="panel">
+        <h2 class="font-bold mb-2">Incident masters</h2>
+        <div class="scroll">
+          <template x-for="incident in incidents" :key="incident.incident_id">
+            <button class="row" :class="selectedIncident===incident.incident_id&&'selected'" @click="selectIncident(incident.incident_id)">
+              <span class="font-mono text-emerald-300" x-text="incident.incident_id"></span>
+              <span class="tag" x-text="incident.status"></span><span class="tag" x-text="incident.severity"></span>
+              <span class="tag mute" x-text="incident.report_ids.length + ' reports'"></span>
+              <span class="tag warn" x-show="incident.review_hold">review hold</span>
+              <span x-text="incident.summary"></span>
+            </button>
+          </template>
+        </div>
+        <template x-if="activeIncident()">
+          <div class="detail">
+            <h3 class="font-semibold">Incident <span x-text="selectedIncident"></span></h3>
+            <p x-text="activeIncident().status + ' · ' + activeIncident().severity + ' · confidence ' + activeIncident().confidence"></p>
+            <p class="text-sm text-amber-300" x-show="activeIncident().review_hold" x-text="'Review hold: ' + activeIncident().review_hold"></p>
+            <h4 class="text-sm font-semibold mt-3">Timeline</h4>
+            <table>
+              <thead><tr><th>Report</th><th>Relationship</th><th>State</th><th>Severity</th><th>Confidence</th><th>Action</th><th>Review</th></tr></thead>
+              <tbody>
+                <template x-for="decision in incidentDecisions()" :key="decision.report_id">
+                  <tr :class="selectedReport===decision.report_id&&'selected'">
+                    <td><button class="link font-mono" @click="selectReport(decision.report_id)" x-text="decision.report_id"></button></td>
+                    <td x-text="decision.relationship"></td>
+                    <td x-text="change(decision.previous_status, decision.status)"></td>
+                    <td x-text="change(decision.previous_severity, decision.severity)"></td>
+                    <td :class="confidenceDropped(decision)&&'text-amber-300'" x-text="change(decision.previous_confidence, decision.confidence)"></td>
+                    <td x-text="actionLabel(decision)"></td>
+                    <td x-text="decision.requires_human_approval ? (decision.review_id || 'held') : ''"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </template>
       </section>
-      <section class="panel"><h2 class="font-bold mb-2">Decisions and reasoning</h2>
-        <div class="scroll"><template x-for="decision in decisions" :key="decision.report_id"><button class="row" :class="selectedReport===decision.report_id&&'selected'" @click="selectDecision(decision)"><span class="text-cyan-300" x-text="decision.report_id"></span> → <span class="text-emerald-300" x-text="decision.incident_id"></span> <span x-text="decision.relationship + ' · ' + decision.status"></span></button></template></div>
-        <template x-if="activeDecision()"><div class="detail"><h3 class="font-semibold">Trace</h3><ol class="list-decimal ml-5 text-sm"><template x-for="line in activeDecision().trace"><li x-text="line"></li></template></ol><p class="mt-2" x-show="activeDecision().proposed_action">Proposed action: <span x-text="activeDecision().proposed_action?.type"></span></p><button class="link" @click="selectReport(activeDecision().report_id)">Open raw report</button> · <button class="link" @click="selectIncident(activeDecision().incident_id)">Open incident</button></div></template>
+
+      <section class="panel">
+        <h2 class="font-bold mb-2">Decisions and reasoning</h2>
+        <div class="flex flex-wrap gap-2 mb-2 text-sm">
+          <template x-for="option in filters" :key="option.key">
+            <button class="btn" :class="filter===option.key&&'on'" @click="filter=option.key" x-text="option.label + ' (' + decisions.filter(option.test).length + ')'"></button>
+          </template>
+        </div>
+        <div class="scroll">
+          <template x-for="decision in filteredDecisions()" :key="decision.report_id">
+            <button class="row" :class="selectedReport===decision.report_id&&'selected'" @click="selectDecision(decision)">
+              <span class="text-cyan-300 font-mono" x-text="decision.report_id"></span> →
+              <span class="text-emerald-300 font-mono" x-text="decision.incident_id"></span>
+              <span class="tag" x-text="decision.relationship"></span><span class="tag" x-text="decision.status"></span>
+              <span class="tag warn" x-show="decision.requires_human_approval">review</span>
+            </button>
+          </template>
+        </div>
+        <template x-if="activeDecision()">
+          <div class="detail">
+            <h3 class="font-semibold">Trace for <span x-text="selectedReport"></span></h3>
+            <ol class="list-decimal ml-5 text-sm"><template x-for="line in activeDecision().trace"><li x-text="line"></li></template></ol>
+            <p class="mt-2 text-sm" x-text="'Action: ' + actionLabel(activeDecision())"></p>
+            <button class="link" @click="selectReport(activeDecision().report_id)">Open raw report</button> ·
+            <button class="link" @click="selectIncident(activeDecision().incident_id)">Open incident</button>
+          </div>
+        </template>
       </section>
-      <section class="panel"><h2 class="font-bold mb-2">Action proposals and review</h2>
-        <p class="text-sm text-slate-400 mb-2">Action proposals are recorded only; no external executor is connected.</p>
-        <div class="scroll"><template x-for="decision in decisions.filter(item=>item.proposed_action)" :key="decision.report_id"><div class="row"><button class="link" @click="selectDecision(decision)" x-text="decision.proposed_action.type + ' · ' + decision.proposed_action.service"></button><button class="link ml-2" @click="selectReport(decision.report_id)" x-text="decision.report_id"></button> → <button class="link" @click="selectIncident(decision.incident_id)" x-text="decision.incident_id"></button></div></template></div>
+
+      <section class="panel">
+        <h2 class="font-bold mb-2">Action history and review</h2>
+        <p class="text-sm text-slate-400 mb-2">Proposals are recorded only; no external executor is connected. Suppressed entries are actions the engine chose not to repeat.</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Incident</th><th>Report</th><th>Action</th><th>Service</th><th>Outcome</th></tr></thead>
+            <tbody>
+              <template x-for="(entry, index) in actionHistory()" :key="index">
+                <tr :class="selectedIncident===entry.incident_id&&'selected'">
+                  <td><button class="link font-mono" @click="selectIncident(entry.incident_id)" x-text="entry.incident_id"></button></td>
+                  <td><button class="link font-mono" @click="selectReport(entry.report_id)" x-text="entry.report_id"></button></td>
+                  <td x-text="entry.action.type"></td><td x-text="entry.action.service"></td>
+                  <td :class="entry.outcome.startsWith('SUPPRESSED')&&'text-slate-400'" x-text="entry.outcome"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p class="text-sm text-slate-400" x-show="!actionHistory().length">No actions proposed yet.</p>
+        </div>
         <h3 class="font-semibold mt-3">Review queue</h3>
-        <div class="scroll"><template x-for="review in reviews" :key="review.review_id"><div class="row"><button class="link" @click="selectReport(review.report_id)" x-text="review.review_id + ' · ' + review.report_id"></button><p x-text="review.reason"></p><p class="text-sm" x-text="review.status"></p><p x-show="review.proposed_action" x-text="review.proposed_action?.type"></p><div x-show="review.status==='PENDING'" class="flex gap-2 mt-2"><button class="btn" @click="decide(review.review_id,true)">Approve for manual handling</button><button class="btn" @click="decide(review.review_id,false)">Reject</button></div></div></template></div>
+        <div class="scroll">
+          <template x-for="review in reviews" :key="review.review_id">
+            <div class="row" :class="selectedIncident===review.incident_id&&'selected'">
+              <span class="font-mono" x-text="review.review_id"></span> ·
+              <button class="link font-mono" @click="selectReport(review.report_id)" x-text="review.report_id"></button> →
+              <button class="link font-mono" @click="selectIncident(review.incident_id)" x-text="review.incident_id"></button>
+              <span class="tag" :class="review.status==='PENDING'&&'warn'" x-text="review.status"></span>
+              <p x-text="review.reason"></p>
+              <p class="text-sm" x-show="review.proposed_action" x-text="'Proposed: ' + review.proposed_action?.type"></p>
+              <div x-show="review.status==='PENDING'" class="flex gap-2 mt-2">
+                <button class="btn" @click="decide(review.review_id,true)">Approve for manual handling</button>
+                <button class="btn" @click="decide(review.review_id,false)">Reject</button>
+              </div>
+            </div>
+          </template>
+        </div>
       </section>
     </div>
   </main>
+
   <script>
     function triageApp(){return{
-      reports:[],incidents:[],decisions:[],reviews:[],selectedReport:null,selectedIncident:null,message:'',draftSource:'',draftPayload:'',
-      async request(path,options={}){const response=await fetch('/api/'+path,{headers:{'Content-Type':'application/json'},...options});const data=await response.json();if(!response.ok)throw Error(data.detail||response.statusText);return data},
-      async load(){try{const state=await this.request('state');Object.assign(this,state);this.message=''}catch(error){this.message=error.message}},
-      activeReport(){return this.reports.find(x=>x.report_id===this.selectedReport)},
+      reports:[],incidents:[],decisions:[],reviews:[],replay:{total:0,position:0},
+      selectedReport:null,selectedIncident:null,message:'',draftSource:'',draftContext:'',draftPayload:'',
+      playing:false,timer:null,filter:'all',
+      filters:[
+        {key:'all',label:'All',test:()=>true},
+        {key:'review',label:'Needs review',test:d=>d.requires_human_approval},
+        {key:'duplicate',label:'Duplicates',test:d=>d.relationship==='DUPLICATE'},
+        {key:'changed',label:'State or severity changed',test:d=>d.previous_status&&(d.previous_status!==d.status||d.previous_severity!==d.severity)},
+        {key:'drop',label:'Confidence dropped',test:d=>d.previous_confidence!==null&&d.confidence<d.previous_confidence},
+        {key:'action',label:'Has action',test:d=>d.action_outcome!=='NONE'},
+      ],
+      async request(path,options={}){
+        const response=await fetch('/api/'+path,{headers:{'Content-Type':'application/json'},...options});
+        const data=await response.json();
+        if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:response.statusText);
+        return data;
+      },
+      apply(state){Object.assign(this,state);this.message=''},
+      async load(){try{this.apply(await this.request('state'))}catch(error){this.message=error.message}},
+      reportById(id){return this.reports.find(x=>x.report_id===id)},
+      activeReport(){return this.reportById(this.selectedReport)},
       activeIncident(){return this.incidents.find(x=>x.incident_id===this.selectedIncident)},
       activeDecision(){return this.decisions.find(x=>x.report_id===this.selectedReport)},
-      selectReport(id){this.selectedReport=id;const decision=this.activeDecision();if(decision)this.selectedIncident=decision.incident_id},
-      selectIncident(id){this.selectedIncident=id;const incident=this.activeIncident();if(incident?.report_ids.length)this.selectedReport=incident.report_ids.at(-1)},
-      selectDecision(decision){this.selectedReport=decision.report_id;this.selectedIncident=decision.incident_id},
-      async submit(){if(!this.draftPayload.trim()){this.message='Enter a payload';return}try{const id='R'+Date.now();const report={report_id:id,timestamp:new Date().toISOString(),source:this.draftSource,payload:this.draftPayload};await this.request('reports',{method:'POST',body:JSON.stringify(report)});this.draftPayload='';await this.load();this.selectReport(id)}catch(error){this.message=error.message}},
-      async importJsonl(event){try{const text=await event.target.files[0].text();const reports=text.split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line));await this.request('replay',{method:'POST',body:JSON.stringify(reports)});await this.load();if(reports.length)this.selectReport(reports[0].report_id)}catch(error){this.message=error.message}event.target.value=''},
+      currentDecision(){return this.decisions.at(-1)},
+      incidentDecisions(){return this.decisions.filter(x=>x.incident_id===this.selectedIncident)},
+      filteredDecisions(){return this.decisions.filter(this.filters.find(x=>x.key===this.filter).test)},
+      pendingReviews(){return this.reviews.filter(x=>x.status==='PENDING')},
+      actionHistory(){return this.incidents.flatMap(i=>i.actions.map(a=>({...a,incident_id:i.incident_id})))},
+      remaining(){return this.replay.total-this.replay.position},
+      change(before,after){return before===null||before===undefined||before===after?String(after):`${before} → ${after}`},
+      confidenceDropped(d){return d.previous_confidence!==null&&d.confidence<d.previous_confidence},
+      actionLabel(d){const a=d.proposed_action||d.suppressed_action;return a?`${a.type} · ${a.service} (${d.action_outcome})`:'none'},
+      selectReport(id){this.selectedReport=id;const decision=this.activeDecision();if(decision)this.selectedIncident=decision.incident_id;
+        this.$nextTick(()=>document.getElementById('report-'+id)?.scrollIntoView({block:'nearest'}))},
+      selectIncident(id){this.selectedIncident=id;const incident=this.activeIncident();
+        if(incident&&!incident.report_ids.includes(this.selectedReport))this.selectedReport=incident.report_ids.at(-1)},
+      selectDecision(decision){this.selectReport(decision.report_id)},
+      async submit(){
+        if(!this.draftPayload.trim()){this.message='Enter a payload';return}
+        try{
+          const id='R'+Date.now();
+          const report={report_id:id,timestamp:new Date().toISOString(),source:this.draftSource,payload:this.draftPayload,
+            metadata:this.draftContext.trim()?{context:this.draftContext.trim()}:{}};
+          await this.request('reports',{method:'POST',body:JSON.stringify(report)});
+          this.draftPayload='';await this.load();this.selectReport(id);
+        }catch(error){this.message=error.message}
+      },
+      async loadFile(event){
+        this.stop();
+        try{
+          const file=event.target.files[0];
+          this.apply(await this.request('replay/load',{method:'POST',body:JSON.stringify({filename:file.name,content:await file.text()})}));
+          this.selectedReport=null;this.selectedIncident=null;
+        }catch(error){this.message=error.message}
+        event.target.value='';
+      },
+      async step(steps){
+        if(!this.remaining()){this.stop();return}
+        try{
+          this.apply(await this.request('replay/step',{method:'POST',body:JSON.stringify({steps})}));
+          if(this.currentDecision())this.selectReport(this.currentDecision().report_id);
+          if(!this.remaining())this.stop();
+        }catch(error){this.message=error.message;this.stop()}
+      },
+      togglePlay(){if(this.playing){this.stop()}else{this.playing=true;this.timer=setInterval(()=>this.step(1),700)}},
+      stop(){this.playing=false;clearInterval(this.timer);this.timer=null},
       async decide(id,approved){try{await this.request('reviews/'+id+'/decision',{method:'POST',body:JSON.stringify({approved})});await this.load()}catch(error){this.message=error.message}},
-      async reset(){await this.request('reset',{method:'POST'});this.selectedReport=null;this.selectedIncident=null;await this.load()}
+      async reset(){this.stop();await this.request('reset',{method:'POST'});this.selectedReport=null;this.selectedIncident=null;await this.load()}
     }}
   </script>
 </body>

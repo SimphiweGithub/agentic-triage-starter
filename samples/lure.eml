@@ -1,0 +1,15 @@
+From: "TechCare Support" <support@techcare-help.example>
+Reply-To: billing@pc-care-services.example
+To: gogo@example.org
+Subject: Final notice: your protection plan renews today
+Date: Thu, 01 Oct 2026 09:00:00 +0200
+Message-ID: <lure-0001@techcare-help.example>
+Authentication-Results: mx.example.org; spf=fail smtp.mailfrom=techcare-help.example; dkim=none
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<html><body>
+<p>Your computer protection plan, reference TCS8841, will auto-renew today.</p>
+<p>Call 010 555 0142 immediately to cancel, or confirm your card details at
+<a href="http://www.techcare-help.example/renew">www.yourbank.example/secure</a>.</p>
+</body></html>

@@ -1,0 +1,10 @@
+{"report_id": "S01", "event_id": "E1", "relationship": "NEW", "human_review": false, "actions": []}
+{"report_id": "S02", "event_id": "E1", "relationship": "DUPLICATE", "human_review": false, "actions": []}
+{"report_id": "S03", "event_id": "E2", "relationship": "NEW", "human_review": false, "actions": []}
+{"report_id": "S04", "event_id": "E1", "relationship": "RELATED", "human_review": false, "actions": []}
+{"report_id": "S05", "event_id": "E3", "relationship": "NEW", "human_review": false, "actions": []}
+{"report_id": "S06", "event_id": "E4", "relationship": "NEW", "human_review": false, "actions": []}
+{"report_id": "S07", "event_id": "E4", "relationship": "RELATED", "human_review": false, "actions": []}
+{"report_id": "ROW-00008", "event_id": "E5", "human_review": true}
+{"report_id": "ROW-00009", "event_id": "E6", "human_review": true}
+{"report_id": "S10", "event_id": "E7", "relationship": "NEW", "human_review": false, "actions": []}

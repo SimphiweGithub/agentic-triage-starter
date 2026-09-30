@@ -1,10 +1,12 @@
-# Generic agentic triage starter
+# KinGuard
 
-This is a reusable shell for the final hackathon brief. Its current assessment is intentionally conservative: it assigns a placeholder severity, confidence `0.5`, and **no action**. Do not submit its decisions as challenge predictions until the domain contract is configured.
+An agent that protects an older or digitally vulnerable person from scam messages, predatory debit orders and subscription creep. It reads forwarded emails and shared SMS messages, investigates them with tools, acts within a policy, checks whether its action worked, and corrects itself. A caregiver approves anything that touches the person's bank relationship.
+
+Everything outside the agent is simulated: the bank, the company registry, the domain registry and the mail filter live in `domain/tools.py`. No real system is touched.
 
 ## Setup and run
 
-From the repository root with Python 3.11+:
+From this folder with Python 3.11+:
 
 ```powershell
 python -m venv .venv
@@ -12,25 +14,60 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000`. API and dashboard share port 8000. No CORS middleware or separate frontend build is used. The browser scripts load Tailwind and Alpine from CDNs; API calls use relative `/api/` paths.
-
-The CLI accepts ordered CSV or JSONL files containing the placeholder fields `report_id`, `timestamp`, `source`, and `payload`:
+This project is the backend only. The front end is built separately against `API.md`; interactive API documentation is at `http://127.0.0.1:8000/docs`. The page at `http://127.0.0.1:8000` is a plain developer console for watching the engine.
 
 ```powershell
-.\.venv\Scripts\python.exe runner.py sample.jsonl --output decisions.jsonl
+.\.venv\Scripts\python.exe runner.py samples\kinguard.jsonl --output decisions.jsonl
+.\.venv\Scripts\python.exe evaluation.py samples\kinguard.jsonl decisions.jsonl --truth samples\kinguard_truth.jsonl --issues
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-`decisions.jsonl` uses the temporary `DecisionRecord` schema. Once the judges provide the exact output contract, adapt `domain/schemas.py` and the serializer in `runner.py` before submission.
+## How a message flows
 
-## Challenge day swap order
+1. **Intake** (`domain/intake.py`, `core/ingest.py`): an email or shared message becomes a row. One-time codes are discarded; account numbers are masked.
+2. **Extract** (`domain/extract.py`): merchant, amount, reference, domains, phone numbers, sender checks.
+3. **Correlate** (`core/correlator.py`): link to an incident by explicit link, shared identifier, or guarded fuzzy text.
+4. **Gate** (`domain/gate.py`): a cheap risk score. Benign messages stop here.
+5. **Investigate** (`domain/investigate.py`): domain age, company registry, debit history.
+6. **Assess** (`domain/logic.py`): severity, confidence, and one proposed action.
+7. **Decide** (`core/fsm.py`, `core/guardrails.py`): is the state change legal, and may the action run without a human?
+8. **Act, check, correct** (`core/executor.py`): run the tool; on failure try a corrected action; otherwise ask a human.
+9. **Record** (`core/runtime.py`): the decision, its trace, the action history and any review.
 
-1. Put the supplied input and output fields and enums in `domain/schemas.py` and `domain/enums.py`.
-2. Update `domain/logic.py` to parse records, provide correlation text, and assess severity, confidence, action proposals, and requested states.
-3. Configure allowed transitions, forbidden actions, high impact actions, and safe actions in `domain/policy.py`. The default policy has no external action executor.
-4. Define the relationship ontology in `prompts/relation.md`. Set `ENABLE_LLM_RELATION=1` with `GEMINI_API_KEY` to turn on the structured Gemini second tier; `GEMINI_MODEL` is optional. The default remains deterministic and offline. `core/client.py` handles structured JSON and retries.
-5. Adapt `runner.py` for any new transport or exact export contract. Keep source order. Run the regression tests and `evaluation.py` checks.
+## What the sample scenario shows
 
-`core/` should remain a stable orchestration layer. All action proposals pass through `core/guardrails.py`, and all lifecycle requests pass through `core/fsm.py`. Review approval records a human decision; it does not execute an action. Add an explicit domain action executor only after the challenge's operations and authorization rules are known.
+| Message | Behaviour |
+|---|---|
+| K01 scam email | Investigated, sender blocked, person warned |
+| K02 same email again | Recognised as a duplicate; no second action |
+| K03 one-time PIN | Discarded before storage |
+| K04 debit to a truncated merchant name | Ambiguous registry lookup retried with the payment reference; dispute held for the caregiver |
+| K05 known subscription | Benign |
+| K06 email containing instructions aimed at the agent | Instructions ignored; domain-wide block refused for a shared provider and narrowed to the one address |
+| K07 same operator billing under a new company name | Linked by reference; because the earlier dispute did not stop it, escalated to an operator block |
+| K08 subscription price jump | Flagged for the caregiver; withdrawn and the merchant trusted if the person confirms it |
+| Unreadable line | Still gets a decision, routed to a human |
 
-The dashboard links a raw report to its incident master, decision trace, and review item in both directions. It accepts individual generic reports or a JSONL replay. The runtime is in memory for rapid iteration, so restarting the server clears state.
+## Line-by-line walkthrough
+
+`docs/01` to `docs/05` explain every backend file, line by line.
+
+## Switches
+
+All off by default. Set them as environment variables before starting the server.
+
+| Variable | Effect |
+|---|---|
+| `KINGUARD_LIVE_LOOKUPS=1` | Domain age is looked up for real through RDAP, falling back to fixture data. Tested against live domains; `.co.za` is not covered by RDAP. |
+| `ENABLE_JEV=1` with `TYPESAFE_API_KEY` | The gate also asks Jev four yes/no questions and the threat type. Jev can add suspicion, never remove it. Measured on held-out SMS: rules alone caught 53%, rules plus Jev 87%. |
+| `ENABLE_GEMINI=1` with `GEMINI_API_KEY` | Gemini suggests full names for a garbled merchant descriptor (accepted only if the registry confirms them against the payment reference) and rewords the warning shown to the person (rejected if it contains a number or link). `GEMINI_MODEL` is optional (default `gemini-3.5-flash-lite`). Run against the real API; name suggestion is unreliable on its own. |
+
+Every model call has a rule-based fallback, and model output passes through the same state machine, guardrails and executor as the rules.
+
+## Calibrating the gate
+
+```powershell
+.\.venv\Scripts\python.exe calibrate.py labelled.jsonl
+```
+
+Prints caught, false alarms and missed at every threshold. The labels must be written by someone other than the rule author.
