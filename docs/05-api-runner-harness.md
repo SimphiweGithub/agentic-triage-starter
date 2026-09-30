@@ -357,26 +357,45 @@ on this machine.
   not in the phone's contacts.
 - **Line 20 `MONTHS`** — month names, used only to spot repeats.
 
-### `collect` (lines 23–42)
+### `looks_personal` (lines 23–34)
 
-- **25** — `by_sender`: each sender's kept messages.
-- **26** — `seen`: the shapes of messages already kept.
-- **27** — walk through every `<sms>` entry in the file. Picture messages are
+True when a sender looks like a person rather than a business.
+
+- **31–32** — a sender with letters in it (`Capitec`, `MTN136`) is a business.
+- **33** — otherwise keep only the digits.
+- **34** — 7 to 12 digits looks like a phone number. Shorter is a short code;
+  longer is a bulk-messaging number.
+
+Why this exists: on the first real export, 4,294 of 4,299 texts had no
+contact name, so "skip saved contacts" filtered almost nothing and personal
+conversations would have reached the labelling file. The phone-number test
+does not depend on the export knowing who is a contact.
+
+The cost: a scam from an ordinary phone number, such as "Hi mom, new
+number", is left out too. Those have to be added to the file by hand.
+
+### `collect` (lines 37–59)
+
+- **39** — `by_sender`: each sender's kept messages.
+- **40** — `seen`: the shapes of messages already kept.
+- **41** — walk through every `<sms>` entry in the file. Picture messages are
   a different tag and are skipped.
-- **28** — `text`: the body with its whitespace tidied.
-- **29–30** — skip anything sent by the phone's owner, and anything from a
-  saved contact. That is what keeps private conversations out.
-- **31–32** — skip empty messages and one-time codes.
-- **33** — mask account and card numbers.
-- **34–37** — `shape` is the message with every number turned into `0` and
-  every month into `month`. Two debit notices that differ only in amount or
-  date have the same shape, so only the first is kept.
-- **38** — file the message under its sender.
-- **39–42** — take at most `per_sender` messages from each sender, shuffle,
-  and cut to `limit`. One bank cannot fill the whole file, and the file stays
-  short enough to label by hand. The fixed `seed` makes the sample repeatable.
+- **42** — `text`: the body with its whitespace tidied.
+- **43** — `sender`: the address the message came from.
+- **44–45** — skip anything sent by the phone's owner, and anything the
+  export marks as from a saved contact.
+- **46–47** — skip anything from a sender that looks like a person.
+- **48–49** — skip empty messages and one-time codes.
+- **50** — mask account and card numbers.
+- **51–54** — `shape` is the message with every number turned into `0` and
+  every month into `month`. Two notices that differ only in amount or date
+  have the same shape, so only the first is kept.
+- **55** — file the message under its sender.
+- **56–59** — take at most `per_sender` messages from each sender, shuffle,
+  and cut to `limit`, so the file stays short enough to label by hand. The
+  fixed `seed` makes the sample repeatable.
 
-### `main` (lines 45–55)
+### `main` (lines 62–72)
 
 Reads the export path and the options, calls `collect`, and writes each
 message as `?<TAB>text<TAB>sender`. A person then replaces each `?` with

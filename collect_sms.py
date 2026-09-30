@@ -1,7 +1,7 @@
 """Turn an "SMS Backup & Restore" export into a small file of messages ready to be labelled.
 
 Everything runs on this machine. The script keeps only received texts from
-senders who are not saved contacts, drops one-time codes, masks account
+business senders (names, short codes, bulk numbers), drops one-time codes, masks account
 numbers, and takes a limited sample so the file is short enough to label by
 hand. Output lines are `?<TAB>text<TAB>sender`; a person then replaces each
 `?` with `scam` or `benign`.
@@ -20,13 +20,30 @@ NOT_A_CONTACT = {"", "(unknown)", "null"}
 MONTHS = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b")
 
 
+def looks_personal(sender: str) -> bool:
+    """True for a sender that looks like a person's phone number, as opposed to a business.
+
+    Businesses send from names ("Capitec"), short codes (up to 6 digits) or long
+    bulk-messaging numbers (13 digits or more). A number of 7 to 12 digits looks
+    like someone's phone, and the export often does not say whether that person
+    is a saved contact, so those messages are left out to keep conversations private.
+    """
+    if re.search(r"[A-Za-z]", sender):
+        return False
+    digits = re.sub(r"\D", "", sender)
+    return 7 <= len(digits) <= 12
+
+
 def collect(export: Path, per_sender: int, limit: int, seed: int = 1) -> list[tuple[str, str]]:
-    """Returns (text, sender) pairs: received, not from a saved contact, no one-time codes, numbers masked."""
+    """Returns (text, sender) pairs: received, from a business sender, no one-time codes, numbers masked."""
     by_sender: dict[str, list[str]] = defaultdict(list)
     seen = set()
     for sms in ET.parse(export).getroot().iter("sms"):
         text = " ".join((sms.get("body") or "").split())
+        sender = sms.get("address") or ""
         if sms.get("type") != RECEIVED or (sms.get("contact_name") or "").strip().lower() not in NOT_A_CONTACT:
+            continue
+        if looks_personal(sender):
             continue
         if not text or is_one_time_code(text):
             continue
@@ -35,7 +52,7 @@ def collect(export: Path, per_sender: int, limit: int, seed: int = 1) -> list[tu
         if shape in seen:
             continue
         seen.add(shape)
-        by_sender[sms.get("address") or "unknown"].append(text)
+        by_sender[sender or "unknown"].append(text)
     chooser = random.Random(seed)
     sample = [(text, sender) for sender, texts in by_sender.items() for text in chooser.sample(texts, min(per_sender, len(texts)))]
     chooser.shuffle(sample)

@@ -18,7 +18,7 @@ from core.ingest import kept, read_records, safe_parse
 from core.runtime import TriageRuntime
 from domain.enums import ActionOutcome, ActionType, IncidentState, Relationship, ServiceDomain, SeverityLevel, ThreatDomain
 from calibrate import load_labelled, sweep
-from collect_sms import collect
+from collect_sms import collect, looks_personal
 from core.jev import system_one
 from domain.extract import extract_signals, redact
 from domain.gate import gate
@@ -690,9 +690,15 @@ class CollectionTests(unittest.TestCase):
             export.write_text(self.EXPORT, encoding="utf-8")
             sample = collect(export, per_sender=8, limit=150)
         texts = [text for text, _ in sample]
-        self.assertEqual(len(sample), 2)                                   # one debit notice, one scam; repeats and the rest dropped
-        self.assertFalse(any("PIN" in text or "lunch" in text or "Who is this" in text for text in texts))
+        self.assertEqual(len(sample), 1)                                   # one debit notice; repeats, codes, sent texts and personal numbers dropped
+        self.assertFalse(any("PIN" in text or "lunch" in text or "Who is this" in text or "new number" in text for text in texts))
         self.assertFalse(any("1234567890" in text for text in texts))
+
+    def test_personal_looking_numbers_are_left_out_even_without_a_contact_name(self):
+        for business in ("Capitec", "MTN136", "33388", "+2781160933200100"):
+            self.assertFalse(looks_personal(business))
+        for person in ("+27825550199", "0825550199", "+37061910800"):
+            self.assertTrue(looks_personal(person))
 
     def test_unlabelled_lines_are_refused_not_counted_as_benign(self):
         with tempfile.TemporaryDirectory() as directory:
