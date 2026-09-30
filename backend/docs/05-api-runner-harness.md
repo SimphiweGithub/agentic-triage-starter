@@ -6,20 +6,25 @@ The ways into the engine, the way to score it, and the optional model code.
 
 ## `main.py`
 
-- **Lines 1–9** — imports, including the router from `api/routes.py`.
-- **Line 12** — `ROOT` is the folder this file is in.
-- **Lines 13–14** — `app` is the web application, with a title and description
+- **Lines 1–11** — imports, including the routers from `api/routes.py` and
+  `api/gmail.py`.
+- **Line 13** — `ROOT` is the folder this file is in.
+- **Lines 14–15** — `app` is the web application, with a title and description
   that appear in the generated documentation at `/docs`.
-- **Lines 18–20** — cross-origin access. `CORS_ORIGINS` is read from the
+- **Lines 19–21** — cross-origin access. `CORS_ORIGINS` is read from the
   environment and split on commas into `origins`. If the list is empty, which
   is the default, no cross-origin middleware is added and a page served from
   anywhere else cannot call the API. If addresses are listed, only those may
-  call it, only with GET and POST, and only with a JSON content type.
-- **Line 22** — every route in the router is served under `/api`.
-- **Line 23** — start the live mailbox thread. It does nothing unless
+  call it, only with GET and POST, and only with the `Content-Type` and
+  `Authorization` headers. `Authorization` carries the Clerk session token
+  that the Gmail routes need.
+- **Line 23** — every route in the router is served under `/api`.
+- **Line 24** — the Gmail routes are served under `/api/gmail`. They answer
+  503 unless `CLERK_SECRET_KEY` is set.
+- **Line 25** — start the live mailbox thread. It does nothing unless
   `IMAP_HOST` is set.
-- **Line 24** — the `static` folder is served under `/static`.
-- **Lines 27–30** — the address `/` returns a plain developer console for
+- **Line 26** — the `static` folder is served under `/static`.
+- **Lines 29–32** — the address `/` returns a plain developer console for
   watching the engine. The product front end is built separately.
 
 ---
@@ -78,12 +83,12 @@ reply is sent.
 | 151–154 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
 | 157–165 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
 | 168–176 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
-| 181–183 | `GET /health` | system | Confirms the server is up and reports which optional parts are on: mailbox, Jev, Gemini, live lookups |
-| 188–192 | `GET /state` | system | Everything in one call, plus the simulated world |
-| 195–199 | `POST /reset` | system | Empty everything |
-| 202–209 | `POST /replay` | system | Reset, then process a list of reports |
-| 212–220 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 223–227 | `POST /replay/step` | system | Process the next messages in the queue |
+| 181–185 | `GET /health` | system | Confirms the server is up and reports which optional parts are on: mailbox, Jev, Gemini, live lookups, Gmail (true when `CLERK_SECRET_KEY` is set) |
+| 189–193 | `GET /state` | system | Everything in one call, plus the simulated world |
+| 196–200 | `POST /reset` | system | Empty everything |
+| 203–210 | `POST /replay` | system | Reset, then process a list of reports |
+| 213–221 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 224–228 | `POST /replay/step` | system | Process the next messages in the queue |
 
 **`feedback` in detail (111–119)**
 - **114–115** — unknown incident: error 404.
@@ -107,8 +112,9 @@ all of them.
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.
 
-What the API does not have: authentication, and more than one protected
-person. Both are stated limits.
+What the API does not have: authentication on these routes, and more than one
+protected person. Both are stated limits. Only the Gmail routes in
+`api/gmail.py` check who is signed in.
 
 ---
 
@@ -148,6 +154,77 @@ is what lets the test use a fake mailbox.
   when the server stops.
 
 Not yet run against a real mailbox; the test uses a stand-in.
+
+---
+
+## `api/gmail.py`
+
+Reads Gmail through the Google account the user signed in with via Clerk.
+Clerk keeps the Google OAuth token and refreshes it; the server asks Clerk for
+it on every call and never stores it.
+
+### Imports and constants (lines 6–24)
+
+- **7** — `html` turns Gmail's escaped snippets (`&amp;`, `&#39;`) back into plain text.
+- **9** — a thread pool, so the list route can fetch several emails at once.
+- **11** — `httpx` makes the calls to Gmail.
+- **12–14** — Clerk's Python SDK: the client for Clerk's own API, and the
+  function that checks a session token.
+- **18** — `take_in_email` and `Withheld` from `api/routes.py`, so an email
+  from Gmail takes exactly the same path as one sent to `POST /intake/email`.
+- **21** — `GMAIL`, the Gmail API address for the signed-in account.
+- **22** — `READ_SCOPE`, the Google permission to read mail and nothing else.
+- **24** — every route here is served under `/gmail`, which `main.py` puts
+  under `/api`.
+
+### `GmailMessage` (lines 27–33)
+
+What the list route returns for each email: its Gmail id and thread id, who
+sent it, the subject, the date as the email states it, and Gmail's short
+snippet of the text.
+
+### `signed_in_user` (lines 36–45)
+
+A FastAPI dependency: each route that names it runs it first.
+
+- **38–40** — without `CLERK_SECRET_KEY` the server cannot check anyone, so it
+  answers 503 and says what is missing.
+- **41** — the front end addresses from `CORS_ORIGINS`. When listed, a token
+  is only accepted if Clerk issued it to one of them.
+- **42** — Clerk checks the `Authorization: Bearer` session token: signature,
+  expiry and, if listed, which front end it was issued to.
+- **43–44** — no valid session: 401.
+- **45** — return the Clerk user id (`sub`).
+
+### `google_token` (lines 48–57)
+
+- **50–51** — ask Clerk for the user's Google access token.
+- **52–54** — no Google account connected: 403.
+- **55–56** — Google is connected but without `READ_SCOPE`: 403, with a
+  message saying to sign in with Google again.
+- **57** — the token.
+
+### `gmail_get` (lines 60–68)
+
+One GET to Gmail with the token. Google refusing the token becomes 401, an
+unknown email 404, and any other Gmail error 502. The test replaces this
+function, so no test reaches Google.
+
+### `_summary` (lines 71–74)
+
+Turns one Gmail message into a `GmailMessage`. Header names are matched
+without regard to case; a missing header is an empty string. The snippet is
+unescaped, because Gmail sends it HTML-escaped.
+
+### Endpoints
+
+| Lines | Route | What it does |
+|---|---|---|
+| 77–85 | `GET /gmail/messages` | The newest emails matching `q` (default `in:inbox`), at most `max_results` (1–50, default 10). One list call, then one call per email for its From, Subject and Date headers, up to 8 at a time (line 84), in the original order. Read only. |
+| 88–92 | `POST /gmail/messages/{id}/intake` | Fetch the full raw email, decode it from Gmail's URL-safe base64 (adding back the padding Gmail leaves off), and hand it to `take_in_email`. Returns a decision, or `withheld` if it held a one-time code. |
+
+Listing has been run against a real Gmail account through the front end.
+The tests use stand-ins for Clerk and Gmail.
 
 ---
 

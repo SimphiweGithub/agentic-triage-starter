@@ -12,6 +12,8 @@ approve or reject.
 
 ## Running it
 
+Run this command from `backend/` after following its README setup steps.
+
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
@@ -149,6 +151,32 @@ checks that mailbox every few seconds and takes in each unread email exactly
 as `POST /intake/email` would. Nothing changes for the front end: the new
 incident simply appears in `GET /incidents`. `GET /health` reports whether the
 mailbox and the models are switched on.
+
+## Gmail
+
+The only routes that need a signed-in user. The front end signs the user in
+with Clerk, then sends the session token on each call:
+
+```
+Authorization: Bearer <await getToken() from @clerk/react>
+```
+
+| Call | Returns |
+|---|---|
+| `GET /gmail/messages?max_results=10&q=in:inbox` | The newest emails: `[{id, thread_id, sender, subject, date, snippet}]`. `q` is any Gmail search, for example `is:unread`. |
+| `POST /gmail/messages/{id}/intake` | Takes that email in exactly as `POST /intake/email` would; returns a decision or `withheld`. |
+
+| Code | Meaning |
+|---|---|
+| `401` | No valid Clerk session, or Google refused the token |
+| `403` | No Google account connected, or connected without Gmail read access |
+| `502` | Gmail returned an error |
+| `503` | `CLERK_SECRET_KEY` is not set on the server |
+
+For this to work, the Clerk application needs Google sign-in with the scope
+`https://www.googleapis.com/auth/gmail.readonly`, using your own Google OAuth
+credentials, because Clerk's shared development credentials cannot add scopes.
+`GET /health` reports `"gmail": true` when the server has a Clerk key.
 
 ## Demo controls
 

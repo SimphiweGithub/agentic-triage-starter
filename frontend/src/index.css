@@ -1,0 +1,95 @@
+/* Design tokens. Dark follows the reference design; light is its daytime counterpart. */
+:root {
+  --bg: #f4f5f6;
+  --panel: #ffffff;
+  --raised: #eef0f2;
+  --border: #d9dde1;
+  --text: #4a535b;
+  --text-h: #11161b;
+  --muted: #6b747c;
+
+  --ok: #1f7a4d;
+  --ok-bg: #e2f3e9;
+  --ok-border: #8fcfab;
+  --warn: #8a5a00;
+  --warn-bg: #fbefd6;
+  --warn-bar: #d9a441;
+  --danger: #b3261e;
+  --danger-bg: #fbe4e2;
+  --info: #235f99;
+  --info-bg: #e1ecf8;
+  --neutral-bg: #e7eaed;
+  --link: #235f99;
+
+  --sans: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  --radius: 12px;
+
+  font: 16px/1.5 var(--sans);
+  color-scheme: light dark;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15191c;
+    --panel: #1a1f23;
+    --raised: #232a2f;
+    --border: #2f373d;
+    --text: #d5dade;
+    --text-h: #f1f3f5;
+    --muted: #8d979f;
+
+    --ok: #8fd6aa;
+    --ok-bg: #1d3528;
+    --ok-border: #4f9c72;
+    --warn: #efc27a;
+    --warn-bg: #3a2d13;
+    --warn-bar: #e9bd6f;
+    --danger: #f19a90;
+    --danger-bg: #3d1f1c;
+    --info: #9cc3ee;
+    --info-bg: #1c2d40;
+    --neutral-bg: #262d33;
+    --link: #9cc3ee;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background: var(--bg);
+}
+
+h1,
+h2,
+h3 {
+  color: var(--text-h);
+  margin: 0;
+  line-height: 1.25;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.82em;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}

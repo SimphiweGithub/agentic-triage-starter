@@ -182,7 +182,8 @@ def move_state(incident_id: str, request: StateRequest):
 def health():
     """Confirms the server is up and says which optional parts are switched on."""
     return {"status": "ok", "mailbox": bool(os.getenv("IMAP_HOST")), "jev": os.getenv("ENABLE_JEV") == "1",
-            "gemini": os.getenv("ENABLE_GEMINI") == "1", "live_lookups": os.getenv("KINGUARD_LIVE_LOOKUPS") == "1"}
+            "gemini": os.getenv("ENABLE_GEMINI") == "1", "live_lookups": os.getenv("KINGUARD_LIVE_LOOKUPS") == "1",
+            "gmail": bool(os.getenv("CLERK_SECRET_KEY"))}
 
 
 @router.get("/state", tags=["system"])

@@ -14,7 +14,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-The front end lives in the sibling `frontend/` folder and is built separately against `API.md`; interactive API documentation is at `http://127.0.0.1:8000/docs`. The page at `http://127.0.0.1:8000` is a plain developer console for watching the engine.
+The sibling `frontend/` folder is reserved for a separately built front end against `API.md`; interactive API documentation is at `http://127.0.0.1:8000/docs`. The page at `http://127.0.0.1:8000` is a plain developer console for watching the engine.
 
 ```powershell
 .\.venv\Scripts\python.exe runner.py samples\kinguard.jsonl --output decisions.jsonl
@@ -63,6 +63,7 @@ All off by default. Set them as environment variables before starting the server
 | `ENABLE_GEMINI=1` with `GEMINI_API_KEY` | Gemini rewords the warning shown to the person. The result is rejected if it contains a number, link or address. `GEMINI_MODEL` is optional (default `gemini-3.5-flash-lite`). |
 
 | `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD` | A live inbox: unread emails in a mailbox created for KinGuard are taken in every `IMAP_POLL_SECONDS` (default 15). Tested with a stand-in mailbox only. |
+| `CLERK_SECRET_KEY` | Enables the Gmail routes (`/api/gmail/...`). The server checks the user's Clerk session and asks Clerk for their Google token. Tested with stand-ins only. |
 
 Every model call has a rule-based fallback, and model output passes through the same state machine, guardrails and executor as the rules.
 
