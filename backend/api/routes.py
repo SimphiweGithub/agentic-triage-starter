@@ -3,11 +3,15 @@ from datetime import datetime, timezone
 import os
 from pathlib import PurePath
 
-from fastapi import APIRouter, HTTPException
+from urllib.parse import parse_qs
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from core.ingest import kept, read_text_records, safe_parse
 from core.runtime import TriageRuntime
+from domain.briefs import guardian_brief
 from domain.enums import IncidentState
 from domain.intake import email_to_row, share_to_row
 from domain.logic import withhold
@@ -47,6 +51,10 @@ class SharedMessage(BaseModel):
 
 class Feedback(BaseModel):
     legitimate: bool
+
+
+class GuardianSetting(BaseModel):
+    enrolled: bool
 
 
 class Withheld(BaseModel):
@@ -89,6 +97,16 @@ def intake_email(upload: EmailUpload):
 def intake_share(message: SharedMessage):
     """A message shared by hand from the phone, for example an SMS."""
     return _take_in(share_to_row(message.text, message.sender, message.channel, _now()))
+
+
+@router.post("/intake/whatsapp", tags=["intake"])
+async def intake_whatsapp(request: Request):
+    """Webhook for a WhatsApp gateway (Twilio format): a form with From and Body. The message is taken in like a shared SMS."""
+    form = parse_qs((await request.body()).decode("utf-8", "replace"))
+    text, sender = form.get("Body", [""])[0], form.get("From", [""])[0].removeprefix("whatsapp:")
+    if text.strip():
+        _take_in(share_to_row(text, sender, "whatsapp", _now()))
+    return Response(content="<Response></Response>", media_type="application/xml")  # an empty reply: the agent never answers the sender
 
 
 @router.post("/reports", tags=["intake"], status_code=201, response_model=DecisionRecord)
@@ -149,14 +167,22 @@ def decision(report_id: str):
 
 
 @router.get("/reviews", tags=["caregiver"], response_model=list[ReviewItem])
-def reviews(status: str | None = None):
-    """The review queue. Pass ?status=PENDING for what still needs the caregiver."""
-    return [item for item in runtime.snapshot()["reviews"] if status is None or item.status == status]
+def reviews(status: str | None = None, audience: str | None = None):
+    """The review queue. Filter with ?status=PENDING and ?audience=CAREGIVER or PERSON."""
+    return [item for item in runtime.snapshot()["reviews"]
+            if (status is None or item.status == status) and (audience is None or item.audience == audience)]
+
+
+@router.get("/guardian/briefs", tags=["caregiver"])
+def guardian_briefs():
+    """Each review waiting for the caregiver as a short plain message, with a link that opens WhatsApp ready to send it."""
+    return [guardian_brief(item, runtime.decisions[item.report_id]) for item in runtime.snapshot()["reviews"]
+            if item.status == "PENDING" and item.audience == "CAREGIVER"]
 
 
 @router.post("/reviews/{review_id}/decision", tags=["caregiver"], response_model=ReviewItem)
 def decide(review_id: str, decision: ReviewDecision):
-    """Approve or reject. An approved action runs now; a rejected one never runs."""
+    """Approve or reject. An approved action runs now; a rejected one never runs. 409 during a cooling-off period."""
     try:
         return runtime.decide_review(review_id, decision.approved)
     except KeyError as error:
@@ -183,14 +209,22 @@ def health():
     """Confirms the server is up and says which optional parts are switched on."""
     return {"status": "ok", "mailbox": bool(os.getenv("IMAP_HOST")), "jev": os.getenv("ENABLE_JEV") == "1",
             "gemini": os.getenv("ENABLE_GEMINI") == "1", "live_lookups": os.getenv("KINGUARD_LIVE_LOOKUPS") == "1",
-            "gmail": bool(os.getenv("CLERK_SECRET_KEY"))}
+            "gmail": bool(os.getenv("CLERK_SECRET_KEY")), "guardian": WORLD.guardian}
 
 
 @router.get("/state", tags=["system"])
 def state():
     """Everything in one call: reports, incidents, decisions, reviews, replay progress and the simulated world."""
     return {**runtime.snapshot(), "world": {"outbox": WORLD.outbox, "flagged": sorted(WORLD.flagged),
-            "disputes": WORLD.disputes, "blocked": sorted(WORLD.blocked), "trusted": sorted(WORLD.trusted)}}
+            "disputes": WORLD.disputes, "blocked": sorted(WORLD.blocked), "trusted": sorted(WORLD.trusted),
+            "guardian": WORLD.guardian}}
+
+
+@router.post("/settings/guardian", tags=["system"])
+def set_guardian(setting: GuardianSetting):
+    """Say whether a caregiver is enrolled. With none, reviews are addressed to the person themselves."""
+    WORLD.guardian = setting.enrolled
+    return {"guardian": WORLD.guardian}
 
 
 @router.post("/reset", tags=["system"])

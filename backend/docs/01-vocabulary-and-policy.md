@@ -42,7 +42,7 @@ relationship for the protected person.
 `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`. The order of the lines matters: the
 harness uses it to measure how far off a severity is.
 
-### `ActionType` (lines 22–28)
+### `ActionType` (lines 22–29)
 
 What the agent can do.
 
@@ -50,23 +50,24 @@ What the agent can do.
 |---|---|
 | `RECORD_ONLY` | Nothing; placeholder used by the generic tests |
 | `WARN_PERSON` | Show the person a plain warning |
+| `ADVISE_DECLINE` | Advise the person not to approve a new debit mandate |
 | `FLAG_SENDER` | Block a sender in the mail filter and warn the person |
 | `DRAFT_DISPUTE` | Write a dispute against a debit |
 | `BLOCK_OPERATOR` | Ask the bank to refuse every mandate from an operator |
 | `WITHDRAW` | Undo the agent's earlier actions and trust the merchant |
 
-### `ServiceDomain` (lines 31–35)
+### `ServiceDomain` (lines 32–36)
 
 Who carries out an action: `PERSON` (the person's own app), `MAIL_FILTER`,
 `BANK`, or `UNSPECIFIED`.
 
-### `Relationship` (lines 38–41)
+### `Relationship` (lines 39–42)
 
 How a new message relates to what is already known: `NEW` (starts an
 incident), `RELATED` (more evidence about an existing one), `DUPLICATE` (the
 same message again).
 
-### `ActionOutcome` (lines 44–52)
+### `ActionOutcome` (lines 45–53)
 
 What the engine did with a proposed action.
 
@@ -80,10 +81,10 @@ What the engine did with a proposed action.
 | `SUPPRESSED_DUPLICATE` | Not run because the message was a duplicate |
 | `SUPPRESSED_REPEAT` | Not run because the same action was already taken |
 
-### `ThreatDomain` (lines 55–61)
+### `ThreatDomain` (lines 56–64)
 
 The kind of threat: `BENIGN`, `GREY_MARKET_SUBSCRIPTION`, `IDENTITY_FARMING`,
-`TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `UNKNOWN`.
+`TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `IMPERSONATION`, `ADVANCE_FEE`, `UNKNOWN`.
 
 ---
 
@@ -125,7 +126,7 @@ object"; without it, all objects would share one dictionary.
 - `outcome` — an `ActionOutcome`.
 - `detail` — what the tool or the guardrail said.
 
-### `Assessment` (lines 37–45) — the domain's judgement of one message
+### `Assessment` (lines 37–47) — the domain's judgement of one message
 
 - `severity`, `confidence` — `Field(ge=0, le=1)` forces confidence between 0 and 1.
 - `requested_state` — the state the domain asks for. The state machine decides
@@ -134,9 +135,11 @@ object"; without it, all objects would share one dictionary.
 - `rationale` — the reasoning in words.
 - `review_reason` — set when the evidence itself needs a human, even if no
   action is proposed.
+- `review_delay_seconds` — how long a human must wait before approving the
+  review this assessment opens. 0 means no wait. Used for the cooling-off.
 - `labels` — extra tags such as the threat type and merchant name.
 
-### `IncidentRecord` (lines 48–59) — the evolving state of one incident
+### `IncidentRecord` (lines 50–61) — the evolving state of one incident
 
 - `incident_id`, `status`, `severity`, `confidence` — current assessment.
 - `report_ids` — every message linked to this incident, in order.
@@ -147,7 +150,7 @@ object"; without it, all objects would share one dictionary.
 - `actions` — the list of `ActionRecord`s: the action history.
 - `labels` — accumulated tags from the assessments.
 
-### `DecisionRecord` (lines 62–78) — the engine's output for one message
+### `DecisionRecord` (lines 64–80) — the engine's output for one message
 
 - `report_id`, `incident_id`, `relationship` — what the message was linked to.
 - `status`, `severity`, `confidence` — the incident's state after this message.
@@ -160,12 +163,16 @@ object"; without it, all objects would share one dictionary.
 - `labels` — a copy of the incident's labels at that moment.
 - `trace` — the step-by-step reasoning, one sentence per step.
 
-### `ReviewItem` (lines 81–88) — one item in the caregiver's queue
+### `ReviewItem` (lines 83–92) — one item in the caregiver's queue
 
 - `review_id`, `report_id`, `incident_id` — links.
 - `reason` — why a human is needed.
 - `proposed_action` — the action waiting for approval, if any.
 - `status` — `PENDING`, `APPROVED`, `REJECTED`, `APPROVED_ACTION_FAILED` or `SUPERSEDED`.
+- `audience` — who is being asked: `CAREGIVER`, or `PERSON` when no guardian
+  is enrolled.
+- `not_before` — a time before which approval is refused, or `None`. This is
+  the cooling-off.
 - `created_at` — filled in automatically with the current UTC time.
 
 ---
@@ -265,7 +272,17 @@ Which of these are measured:
   `NAME_SIMILARITY` was set from nine hand-made examples, where right matches
   scored 0.67 or more and wrong ones 0.56 or less. Say so if asked.
 
-### Protected list (line 73)
+### Dispute window and cooling-off (lines 72–74)
+
+- **Line 72** `DISPUTE_WINDOW_DAYS = 60` — an unauthorised debit order can be
+  disputed with the bank for 60 days after it runs. This is the industry rule
+  in South Africa from 13 April 2026 (it was 40 days before). Every dispute
+  the agent drafts carries this deadline.
+- **Line 74** `COOLING_OFF_SECONDS` — 24 hours. With no guardian enrolled, a
+  person who confirms a high-risk sender as legitimate must wait this long
+  before it takes effect. The length is a judgement call.
+
+### Protected list (line 78)
 
 `PROTECTED_DOMAINS` — shared mail providers. Blocking `gmail.com` would block
 every legitimate Gmail sender, so the mail filter tool refuses it, and a flag

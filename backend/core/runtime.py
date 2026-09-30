@@ -1,5 +1,5 @@
 """Domain-neutral, in-memory orchestration and audit trail."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from itertools import count
 import os
 from threading import RLock
@@ -8,7 +8,7 @@ from core.correlator import Correlator
 from core.executor import execute_approved, execute_with_correction
 from core.fsm import transition_state
 from domain.enums import ActionOutcome, IncidentState, Relationship, SeverityLevel
-from domain.logic import assess, risk_persists
+from domain.logic import assess, review_audience, risk_persists
 from domain.policy import ACTION_IDENTITY, REPEATABLE_ACTIONS, STATE_AFTER_APPROVED, SUPERSEDING_ACTIONS
 from domain.schemas import ActionRecord, Assessment, DecisionRecord, IncidentRecord, RawInputReport, ReviewItem
 from domain.tools import reset_world
@@ -26,6 +26,7 @@ class TriageRuntime:
             correlator = Correlator(relation_resolver=resolve_relation)
         self.correlator = correlator or Correlator()
         self.llm_assess = os.getenv("ENABLE_LLM_ASSESS") == "1"
+        self.now = lambda: datetime.now(timezone.utc)  # replaceable, so tests can move time forward
         self.reset()
 
     def reset(self) -> None:
@@ -60,14 +61,15 @@ class TriageRuntime:
     def _pending(self, incident_id: str) -> list[ReviewItem]:
         return [item for item in self.reviews.values() if item.incident_id == incident_id and item.status == "PENDING"]
 
-    def _open_review(self, report: RawInputReport, incident: IncidentRecord, reason: str, action=None) -> str:
+    def _open_review(self, report: RawInputReport, incident: IncidentRecord, reason: str, action=None, delay_seconds: int = 0) -> str:
         """One pending review per incident and reason; later reports link to it rather than adding noise."""
         existing = next((item for item in self._pending(incident.incident_id) if item.reason == reason), None)
         if existing:
             return existing.review_id
         review_id = f"REV-{next(self._review_ids):04d}"
-        self.reviews[review_id] = ReviewItem(review_id=review_id, report_id=report.report_id,
-                                             incident_id=incident.incident_id, reason=reason, proposed_action=action)
+        not_before = (self.now() + timedelta(seconds=delay_seconds)).isoformat(timespec="seconds") if delay_seconds else None
+        self.reviews[review_id] = ReviewItem(review_id=review_id, report_id=report.report_id, incident_id=incident.incident_id,
+                                             reason=reason, proposed_action=action, audience=review_audience(), not_before=not_before)
         return review_id
 
     def process(self, report: RawInputReport) -> DecisionRecord:
@@ -124,7 +126,7 @@ class TriageRuntime:
             # Sticky review: a trigger sets the hold; it clears only when no review is pending and the risk is gone.
             review_id = None
             if trigger:
-                review_id = self._open_review(report, incident, trigger, action)
+                review_id = self._open_review(report, incident, trigger, action, assessment.review_delay_seconds)
                 incident.review_hold = trigger
                 trace.append(f"Review: {trigger} ({review_id})")
             pending = self._pending(incident.incident_id)
@@ -202,6 +204,8 @@ class TriageRuntime:
             if not approved:
                 item.status = "REJECTED"
                 return item
+            if item.not_before and self.now() < datetime.fromisoformat(item.not_before):
+                raise ValueError(f"Cooling-off period: this cannot be approved before {item.not_before}")
             item.status = "APPROVED"
             if item.proposed_action is not None:
                 incident = self.incidents[item.incident_id]

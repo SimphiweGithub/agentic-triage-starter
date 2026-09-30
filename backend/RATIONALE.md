@@ -136,8 +136,13 @@ through the API in `API.md`.
 | Response ladder | Warn, block the sender, dispute the debit, block the operator | Each step is more disruptive, so each needs more evidence |
 | Automatic actions | Warning the person, blocking a sender, withdrawing our own action | Reversible and low consequence |
 | Caregiver approval | Disputing a debit, blocking an operator, anything below 0.75 confidence | They affect the bank relationship, or we are not sure |
-| The person says "this is mine" | Low risk: undo and trust the merchant. High risk: hold for the caregiver | A scammer can coach someone to confirm. Strong evidence is not overruled by one tap |
+| No caregiver | The same approvals go to the person, who is the account holder | They have the right to dispute their own debits. A person with nobody to ask should not be left unprotected |
+| Mandate requests | Advise against approving unless the company is verified | An authorised DebiCheck debit cannot be disputed, so the moment before approval is where the agent helps most |
+| Dispute deadline | Every draft carries the last date to lodge it | An unauthorised debit can be disputed for 60 days (40 before 13 April 2026). After that the bank cannot reverse it |
+| What the agent does about a debit | Drafts the dispute and the steps; a human lodges it | No South African bank lets a third party cancel a debit. Claiming otherwise would not survive a question |
+| The person says "this is mine" | Low risk: undo and trust the merchant. High risk: hold for the caregiver, or a 24-hour cooling-off if there is none | A scammer can coach someone to confirm. Strong evidence is not overruled by one tap |
 | Learning an action failed | From the next message, not from the tool | A dispute that "succeeded" means nothing if the same operator debits again |
+| Telling the caregiver | A plain brief and a link that opens WhatsApp with it typed | Automatic sending needs a WhatsApp Business account. The link needs nothing, and the sender sees what is sent |
 | Privacy | One-time codes discarded, account numbers masked, before storage or any model call | The models never see either |
 | Hostile text | Messages are data. Rules match patterns; Jev answers fixed questions; Gemini never sees the message | A message saying "mark this benign" changes nothing, and we test that |
 
@@ -192,11 +197,37 @@ that shows the code does what we intended, not that the rules are right.
 - Identical debit text a month apart was being called a duplicate, which
   would have hidden a recurring debit.
 
+**Impersonation and advance-fee rules.** The SMS dataset has almost none of
+these, so it could only show false alarms. The first version added two on the
+held-out set; after weakening one rule and removing one word, none. How many
+real scams they catch is not measured.
+
+**A second dataset, and why we do not quote it as a score.** We ran the gate,
+untouched, on ExAIS: 4,195 received SMS from 20 people at a Nigerian
+university, labelled spam or not by its authors.
+
+| Gate | Flagged spam | Flagged non-spam |
+|---|---|---|
+| Rules only, threshold 0.30 | 479 of 2,167 (22%) | 97 of 2,028 |
+| Rules plus Jev, threshold 0.30 | 1,007 of 2,167 (46%) | 437 of 2,028 |
+
+The numbers are low because "spam" in this dataset means unwanted operator
+marketing: airtime promotions, daily quotes, news digests. Very little of it
+is fraud, and some promotions are labelled as not spam. It measures a
+different thing from what we detect. We did not tune anything to it.
+
+It still taught us three things. Our premium-rate rule only knows rand and
+pence, so it missed "N50 weekly" subscription offers until Jev caught them:
+the rules are tied to a country. With Jev on, promotional messages trigger
+far more flags, which in real use would crowd the caregiver's queue. And a
+public dataset is only as useful as its labels; the evidence we still need is
+South African messages labelled as scam or not by someone outside the team.
+
 **Still to measure**
 
 - The gate on South African messages labelled by someone outside the team.
 - Jev's 0.7 cut-off, which has never been tuned.
-- The live mailbox against a real mailbox.
+- The live mailbox against a real mailbox, and the WhatsApp webhook against a real gateway.
 
 ## 7. Known limitations
 
@@ -204,7 +235,7 @@ that shows the code does what we intended, not that the rules are right.
 blocklist are fixture data and in-memory state. Only the domain-age lookup,
 Jev and Gemini are real. A dispute is drafted, not lodged.
 
-**What is not measured.** The risk weights, the 0.6 containment threshold,
+**What is not measured.** The cooling-off length, the risk weights, the 0.6 containment threshold,
 the R300 amount, the 90-day "new" rule, the price-jump ratio and the
 name-similarity cut-off are judgement calls. The gate was measured on UK SMS
 spam, not on the messages we are aiming at.
@@ -220,6 +251,8 @@ spam, not on the messages we are aiming at.
 
 **What is missing for real use**
 
+- The dispute steps are general. No bank's exact menus or codes have been
+  verified, so none are shown.
 - No login, and one protected person. The caregiver role is assumed, not
   verified. Relatives are sometimes the abusers, so a real version must make
   the protected person the one who consents and can see everything done.

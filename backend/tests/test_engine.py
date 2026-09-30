@@ -3,6 +3,7 @@ import os
 os.environ["KINGUARD_SKIP_ENV_FILE"] = "1"  # tests never read real keys or switches from .env
 
 import base64
+from datetime import timedelta
 import json
 import tempfile
 import unittest
@@ -17,7 +18,8 @@ from core.guardrails import enforce_action_safety
 from core.ingest import kept, read_records, safe_parse
 from core.runtime import TriageRuntime
 from domain.enums import ActionOutcome, ActionType, IncidentState, Relationship, ServiceDomain, SeverityLevel, ThreatDomain
-from calibrate import sweep
+from calibrate import load_labelled, sweep
+from collect_sms import collect, looks_personal, mask_for_labelling
 from core.jev import system_one
 from domain.extract import extract_signals, redact
 from domain.gate import gate
@@ -597,6 +599,188 @@ class GmailRouteTests(unittest.TestCase):
                 with self.assertRaises(gmail.HTTPException) as refused:
                     gmail.google_token("user_1")
                 self.assertEqual(refused.exception.status_code, 403)
+MANDATE = "Nedbank: Mandate registered for R189.00 by TECHCARE SUPPORT. Reply within 24h to reject."
+DEBIT = "YourBank: Debit order of R349.00 to TECHCARE ref TCS8841 from acc 1234567890 on 02 Oct."
+
+
+def message(report_id: str, text: str, timestamp: str = "2026-10-02T06:00:00") -> RawInputReport:
+    return parse_record({"report_id": report_id, "timestamp": timestamp, "source": "sms", "payload": text, "metadata": {"sender": "bank"}})
+
+
+class MandateDeadlineAndSoloTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = TriageRuntime()
+
+    def test_mandate_request_from_an_unverified_company_is_advised_against(self):
+        report = message("M1", MANDATE)
+        self.assertEqual(report.metadata["signals"]["kind"], "mandate")
+        self.assertEqual(report.metadata["signals"]["merchant"], "techcare support")
+        decision = self.runtime.process(report)
+        self.assertEqual(decision.proposed_action.type, ActionType.ADVISE_DECLINE)
+        self.assertEqual(decision.action_outcome, ActionOutcome.EXECUTED)
+        self.assertFalse(decision.requires_human_approval)
+        self.assertIn("do not approve", WORLD.outbox[0]["message"])
+
+    def test_mandate_request_from_an_established_company_is_left_to_the_person(self):
+        decision = self.runtime.process(message("M1", "Capitec: New debit order approval request from STREAMBOX."))
+        self.assertIsNone(decision.proposed_action)
+        self.assertEqual(WORLD.outbox, [])
+
+    def test_a_debit_that_has_run_is_not_mistaken_for_a_mandate_request(self):
+        self.assertEqual(message("D1", DEBIT).metadata["signals"]["kind"], "debit")
+
+    def test_dispute_carries_its_deadline_and_the_steps_to_lodge_it(self):
+        decision = self.runtime.process(message("D1", DEBIT))
+        self.assertEqual(decision.proposed_action.details["dispute_by"], "2026-12-01")
+        self.assertIn("Shall we prepare a dispute", decision.proposed_action.details["ask"])
+        self.runtime.decide_review(decision.review_id, approved=True)
+        dispute = WORLD.disputes["2026/118822/07"]
+        self.assertEqual(dispute["dispute_by"], "2026-12-01")
+        self.assertEqual(len(dispute["steps"]), 4)
+
+    def test_without_a_guardian_the_person_is_asked_instead(self):
+        with_guardian = self.runtime.process(message("D1", DEBIT))
+        self.assertEqual(self.runtime.reviews[with_guardian.review_id].audience, "CAREGIVER")
+        self.runtime.reset()
+        WORLD.guardian = False
+        solo = self.runtime.process(message("D1", DEBIT))
+        review = self.runtime.reviews[solo.review_id]
+        self.assertEqual(review.audience, "PERSON")
+        self.assertIsNone(review.not_before)
+        self.runtime.decide_review(solo.review_id, approved=True)
+        self.assertIn("2026/118822/07", WORLD.disputes)
+
+    def test_solo_override_of_a_high_risk_sender_needs_a_cooling_off(self):
+        WORLD.guardian = False
+        lure = self.runtime.process(parse_record(kinguard_rows()["K01"]))
+        answer = self.runtime.process(RawInputReport(report_id="F1", source="person", payload="legitimate",
+                                                     metadata={"incident_id": lure.incident_id, "feedback": "legitimate"}))
+        review = self.runtime.reviews[answer.review_id]
+        self.assertEqual(review.audience, "PERSON")
+        self.assertIsNotNone(review.not_before)
+        with self.assertRaises(ValueError):
+            self.runtime.decide_review(answer.review_id, approved=True)
+        self.assertIn("techcare-help.example", WORLD.flagged)
+        later = self.runtime.now() + timedelta(hours=25)
+        self.runtime.now = lambda: later
+        self.runtime.decide_review(answer.review_id, approved=True)
+        self.assertNotIn("techcare-help.example", WORLD.flagged)
+
+    def test_guardian_setting_and_audience_filter_over_the_api(self):
+        client = TestClient(app)
+        client.post("/api/reset")
+        self.assertTrue(client.get("/api/health").json()["guardian"])
+        self.assertEqual(client.post("/api/settings/guardian", json={"enrolled": False}).json(), {"guardian": False})
+        sent = client.post("/api/intake/share", json={"text": DEBIT, "sender": "YourBank"}).json()
+        self.assertEqual([item["review_id"] for item in client.get("/api/reviews", params={"audience": "PERSON"}).json()], [sent["review_id"]])
+        self.assertEqual(client.get("/api/reviews", params={"audience": "CAREGIVER"}).json(), [])
+        lure = client.post("/api/intake/email", json={"content": (ROOT / "samples" / "lure.eml").read_text(encoding="utf-8")}).json()
+        answer = client.post(f"/api/incidents/{lure['incident_id']}/feedback", json={"legitimate": True}).json()
+        self.assertEqual(client.post(f"/api/reviews/{answer['review_id']}/decision", json={"approved": True}).status_code, 409)
+        client.post("/api/reset")
+        self.assertTrue(client.get("/api/health").json()["guardian"])
+
+
+class WhatsAppAndNewScamTests(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app)
+        self.client.post("/api/reset")
+
+    def tearDown(self):
+        self.client.post("/api/reset")
+
+    def test_relative_on_a_new_number_asking_for_money_is_flagged(self):
+        text = "Hi mom this is my new number, my phone was stolen. Please send R2000 to this account today."
+        verdict = gate(text, extract_signals(text, {}))
+        self.assertEqual(verdict.threat, ThreatDomain.IMPERSONATION)
+        self.assertGreaterEqual(verdict.score, 0.5)
+        honest = "This is my new number by the way."
+        self.assertLess(gate(honest, extract_signals(honest, {})).score, 0.3)
+
+    def test_advance_fee_wording_is_flagged(self):
+        text = "Your inheritance is ready for release once the clearance fee is paid."
+        self.assertEqual(gate(text, extract_signals(text, {})).threat, ThreatDomain.ADVANCE_FEE)
+
+    def test_whatsapp_webhook_takes_in_the_message_and_never_replies(self):
+        body = "From=whatsapp%3A%2B27825550199&Body=Hi+mom+this+is+my+new+number.+Please+send+R2000+today."
+        response = self.client.post("/api/intake/whatsapp", content=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "<Response></Response>")
+        state = self.client.get("/api/state").json()
+        self.assertEqual(state["reports"][0]["source"], "whatsapp")
+        self.assertEqual(state["reports"][0]["metadata"]["sender"], "+27825550199")
+        self.assertEqual(state["incidents"][0]["labels"]["threat"], "IMPERSONATION")
+        empty = self.client.post("/api/intake/whatsapp", content="From=whatsapp%3A%2B27825550199&Body=", headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(empty.status_code, 200)
+        self.assertEqual(len(self.client.get("/api/state").json()["reports"]), 1)
+
+    def test_guardian_brief_is_plain_and_links_to_whatsapp(self):
+        self.assertEqual(self.client.get("/api/guardian/briefs").json(), [])
+        sent = self.client.post("/api/intake/share", json={"text": DEBIT, "sender": "YourBank"}).json()
+        with patch.dict("os.environ", {"GUARDIAN_WHATSAPP": "+27 82 123 4567"}):
+            briefs = self.client.get("/api/guardian/briefs").json()
+        self.assertEqual(len(briefs), 1)
+        self.assertEqual(briefs[0]["review_id"], sent["review_id"])
+        self.assertIn("Shall we prepare a dispute", briefs[0]["text"])
+        self.assertIn("lodged by", briefs[0]["text"])
+        self.assertTrue(briefs[0]["whatsapp_link"].startswith("https://wa.me/27821234567?text=KinGuard"))
+        self.client.post(f"/api/reviews/{sent['review_id']}/decision", json={"approved": False})
+        self.assertEqual(self.client.get("/api/guardian/briefs").json(), [])
+        self.client.post("/api/settings/guardian", json={"enrolled": False})
+        self.client.post("/api/intake/share", json={"text": DEBIT.replace("TCS8841", "TCS8850"), "sender": "YourBank"})
+        self.assertEqual(self.client.get("/api/guardian/briefs").json(), [])
+
+
+class CollectionTests(unittest.TestCase):
+    EXPORT = """<?xml version='1.0' encoding='UTF-8'?>
+<smses count="7">
+  <sms address="Capitec" type="1" body="Capitec: Debit order of R99.00 to STREAMBOX ref SBX1001 from acc 1234567890 on 03 Oct." contact_name="(Unknown)" />
+  <sms address="Capitec" type="1" body="Capitec: Debit order of R99.00 to STREAMBOX ref SBX1001 from acc 1234567890 on 03 Nov." contact_name="(Unknown)" />
+  <sms address="Capitec" type="1" body="Capitec: your one-time PIN is 482913." contact_name="(Unknown)" />
+  <sms address="+27825550199" type="1" body="Hi mom this is my new number, please send R2000 today" contact_name="(Unknown)" />
+  <sms address="+27821112222" type="1" body="See you at lunch" contact_name="Thandi" />
+  <sms address="+27825550199" type="2" body="Who is this?" contact_name="(Unknown)" />
+  <mms address="x"><parts><part text="picture" /></parts></mms>
+</smses>"""
+
+    def test_export_is_reduced_to_safe_unlabelled_messages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            export = Path(directory) / "sms.xml"
+            export.write_text(self.EXPORT, encoding="utf-8")
+            sample = collect(export, per_sender=8, limit=150)
+        texts = [text for text, _ in sample]
+        self.assertEqual(len(sample), 1)                                   # one debit notice; repeats, codes, sent texts and personal numbers dropped
+        self.assertFalse(any("PIN" in text or "lunch" in text or "Who is this" in text or "new number" in text for text in texts))
+        self.assertFalse(any("1234567890" in text for text in texts))
+
+    def test_personal_looking_numbers_are_left_out_even_without_a_contact_name(self):
+        for business in ("Capitec", "MTN136", "33388", "+2781160933200100"):
+            self.assertFalse(looks_personal(business))
+        for person in ("+27825550199", "0825550199", "+37061910800"):
+            self.assertTrue(looks_personal(person))
+
+    def test_messages_that_hand_over_a_secret_are_withheld(self):
+        for secret in ("Your password is Kx81!pq", "Use recovery code 4821-9921 to sign in", "Your login details: user ST10451674"):
+            self.assertIsNotNone(withhold({"payload": secret}))
+        self.assertIsNone(withhold({"payload": "Urgent: confirm your password at http://bank-secure.example"}))
+
+    def test_identifiers_and_names_are_masked_for_labelling(self):
+        masked = mask_for_labelling("Hi Simphiwe, order #OD-4471923 for ST10451674 (st10451674@myemeris.example) R1500.00, call 0105550142",
+                                    ["Simphiwe"])
+        for leaked in ("Simphiwe", "4471923", "10451674", "@myemeris"):
+            self.assertNotIn(leaked, masked)
+        self.assertIn("R1500.00", masked)
+        self.assertIn("0105550142", masked)
+
+    def test_unlabelled_lines_are_refused_not_counted_as_benign(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "messages.tsv"
+            tab = chr(9)
+            path.write_text(f"scam{tab}You have won{tab}33388\n?{tab}See you later{tab}Mum\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_labelled(path)
+            path.write_text(f"scam{tab}You have won{tab}33388\nbenign{tab}See you later{tab}Mum\n", encoding="utf-8")
+            self.assertEqual(load_labelled(path), [("You have won", {}, True), ("See you later", {}, False)])
 
 
 if __name__ == "__main__":

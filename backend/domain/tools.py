@@ -23,10 +23,11 @@ from domain.schemas import ActionProposal, IncidentRecord, RawInputReport, ToolR
 class World:
     outbox: list[dict] = field(default_factory=list)           # messages shown to the protected person
     flagged: set[str] = field(default_factory=set)             # senders and domains the mail filter blocks
-    disputes: dict[str, str] = field(default_factory=dict)     # company registration number -> dispute text
+    disputes: dict[str, dict] = field(default_factory=dict)    # company registration number -> dispute text, deadline, steps
     blocked: set[str] = field(default_factory=set)             # operators whose debits the bank is asked to refuse
     trusted: set[str] = field(default_factory=set)             # merchants the person confirmed as their own
     debits: dict[str, list[float]] = field(default_factory=dict)  # merchant -> amounts seen so far
+    guardian: bool = field(default_factory=lambda: os.getenv("KINGUARD_GUARDIAN", "1") != "0")  # is a caregiver enrolled?
 
 
 WORLD = World()
@@ -48,6 +49,15 @@ COMPANIES = [
     {"name": "TechCare Solutions", "reg_no": "2011/004411/07", "registered": "2011-03-02", "creditor_code": "TSO", "director": "D-1020"},
     {"name": "PC Care Services", "reg_no": "2026/120001/07", "registered": "2026-10-20", "creditor_code": "PCC", "director": "D-7781"},
     {"name": "StreamBox", "reg_no": "2009/030303/07", "registered": "2009-06-15", "creditor_code": "SBX", "director": "D-3344"},
+]
+
+
+# How a person lodges a dispute. General steps; each bank's own screens differ.
+DISPUTE_STEPS = [
+    "Open your banking app, or visit a branch with your ID.",
+    "Find the debit order in your transaction history.",
+    "Choose to dispute it and select that you did not authorise it.",
+    "Keep the reference number the bank gives you.",
 ]
 
 
@@ -155,8 +165,9 @@ def draft_dispute(action: ActionProposal, incident: IncidentRecord, report: RawI
         return ToolResult(ok=False, detail="merchant identity unresolved; a dispute cannot be addressed")
     text = (f"I dispute the debit of R{action.details.get('amount', 0):.2f} by {action.details.get('company')} "
             f"({reg_no}), reference {action.details.get('reference') or 'not shown'}. I did not authorise this mandate.")
-    WORLD.disputes[reg_no] = text
-    return ToolResult(ok=True, detail=f"dispute drafted against {action.details.get('company')}", data={"text": text})
+    WORLD.disputes[reg_no] = {"text": text, "dispute_by": action.details.get("dispute_by", ""), "steps": DISPUTE_STEPS}
+    return ToolResult(ok=True, detail=f"dispute drafted against {action.details.get('company')}; lodge by {action.details.get('dispute_by') or 'the bank deadline'}",
+                      data=WORLD.disputes[reg_no])
 
 
 def block_operator(action: ActionProposal, incident: IncidentRecord, report: RawInputReport) -> ToolResult:
@@ -190,6 +201,7 @@ def withdraw(action: ActionProposal, incident: IncidentRecord, report: RawInputR
 ActionTool = Callable[[ActionProposal, IncidentRecord, RawInputReport], ToolResult]
 ACTION_TOOLS: dict[ActionType, ActionTool] = {
     ActionType.WARN_PERSON: warn_person,
+    ActionType.ADVISE_DECLINE: warn_person,  # same delivery; the message carries the advice
     ActionType.FLAG_SENDER: flag_sender,
     ActionType.DRAFT_DISPUTE: draft_dispute,
     ActionType.BLOCK_OPERATOR: block_operator,

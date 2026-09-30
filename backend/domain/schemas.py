@@ -42,6 +42,8 @@ class Assessment(BaseModel):
     rationale: str
     # Set when the evidence itself needs a human (conflict, uncertainty), with or without an action.
     review_reason: str | None = None
+    # Seconds a human must wait before approving the review this assessment opens. 0 means no wait.
+    review_delay_seconds: int = 0
     labels: dict[str, str] = Field(default_factory=dict)
 
 
@@ -85,4 +87,6 @@ class ReviewItem(BaseModel):
     reason: str
     proposed_action: ActionProposal | None = None
     status: str = "PENDING"
+    audience: str = "CAREGIVER"   # who is asked: CAREGIVER, or PERSON when no guardian is enrolled
+    not_before: str | None = None  # cooling-off: approval is refused until this time
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
