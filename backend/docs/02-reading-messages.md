@@ -32,7 +32,7 @@ is a pattern for finding text.
   above it (lines 6–7) records the one boundary that matters: a scam saying
   "confirm your password" does not match, because it asks for a secret
   instead of handing one over, so it is still analysed.
-- **Line 14 `GROUPED_PATTERN`** — numbers written in groups of four: card
+- **Lines 11–12 `GROUPED_PATTERN`** — numbers written in groups of four: card
   numbers and prepaid electricity tokens (`3916 2010 5929 9797`). Also found
   on the first real sync. Phone numbers are grouped in threes, so they are kept.
 - **Line 10 `ACCOUNT_PATTERN`** — matches a run of 9 to 19 digits: account and
