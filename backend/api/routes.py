@@ -13,6 +13,7 @@ from core.ingest import kept, read_text_records, safe_parse
 from core.runtime import TriageRuntime
 from domain.briefs import guardian_brief
 from domain.enums import IncidentState
+from domain.extract import OTP_PATTERN, SECRET_PATTERN
 from domain.intake import email_to_row, share_to_row
 from domain.logic import withhold
 from domain.schemas import DecisionRecord, IncidentRecord, RawInputReport, ReviewItem
@@ -47,6 +48,9 @@ class SharedMessage(BaseModel):
     text: str = Field(min_length=1)
     sender: str = ""
     channel: str = "sms"
+    # When the phone received it, in ISO format. A phone app syncing its inbox should always send this:
+    # the same message sent twice then has the same id and is not processed twice.
+    timestamp: str = ""
 
 
 class Feedback(BaseModel):
@@ -96,7 +100,19 @@ def intake_email(upload: EmailUpload):
 @router.post("/intake/share", tags=["intake"], response_model=DecisionRecord | Withheld)
 def intake_share(message: SharedMessage):
     """A message shared by hand from the phone, for example an SMS."""
-    return _take_in(share_to_row(message.text, message.sender, message.channel, _now()))
+    return _take_in(share_to_row(message.text, message.sender, message.channel, message.timestamp or _now()))
+
+
+@router.post("/intake/share/batch", tags=["intake"], response_model=list[DecisionRecord | Withheld])
+def intake_share_batch(messages: list[SharedMessage]):
+    """Many messages at once, oldest first, for a phone app syncing its SMS inbox. Messages already seen are not reprocessed."""
+    return [intake_share(message) for message in messages]
+
+
+@router.get("/privacy/patterns", tags=["intake"])
+def privacy_patterns():
+    """The patterns for messages that must never leave the phone, so an app can apply the same filter before sending."""
+    return {"withhold": [OTP_PATTERN.pattern, SECRET_PATTERN.pattern], "flags": "i"}
 
 
 @router.post("/intake/whatsapp", tags=["intake"])

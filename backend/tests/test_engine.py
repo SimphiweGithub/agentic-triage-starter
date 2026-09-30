@@ -783,5 +783,33 @@ class CollectionTests(unittest.TestCase):
             self.assertEqual(load_labelled(path), [("You have won", {}, True), ("See you later", {}, False)])  # unsure is left out
 
 
+class PhoneSyncTests(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app)
+        self.client.post("/api/reset")
+
+    def tearDown(self):
+        self.client.post("/api/reset")
+
+    def test_inbox_sync_is_idempotent_and_filters_codes(self):
+        inbox = [{"text": DEBIT, "sender": "YourBank", "timestamp": "2026-10-02T06:00:00"},
+                 {"text": "Your OTP is 123456", "sender": "YourBank", "timestamp": "2026-10-02T06:01:00"},
+                 {"text": "See you at lunch", "sender": "Checkers", "timestamp": "2026-10-02T07:00:00"}]
+        first = self.client.post("/api/intake/share/batch", json=inbox).json()
+        self.assertEqual(["report_id" in item for item in first], [True, False, True])
+        self.assertEqual(first[1]["status"], "withheld")
+        again = self.client.post("/api/intake/share/batch", json=inbox).json()
+        self.assertEqual(first[0]["report_id"], again[0]["report_id"])
+        state = self.client.get("/api/state").json()
+        self.assertEqual(len(state["reports"]), 2)
+        self.assertEqual(len(state["reviews"]), 1)
+
+    def test_phone_can_fetch_the_same_privacy_filter(self):
+        patterns = self.client.get("/api/privacy/patterns").json()
+        self.assertEqual(len(patterns["withhold"]), 2)
+        import re
+        self.assertTrue(any(re.search(pattern, "Your recovery code is 4471", re.I) for pattern in patterns["withhold"]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -208,6 +208,35 @@ delivered at once.
 | `409` | Not allowed right now: a review already decided, or still in its cooling-off period |
 | `422` | The body does not match the schema; the response says which field |
 
+## Android app (Capacitor)
+
+An Android app reading the phone's SMS inbox uses three calls:
+
+1. `GET /privacy/patterns` once at start-up. It returns the patterns for
+   one-time codes and messages that hand over a password or recovery code,
+   as strings with the `i` flag. Apply them **on the phone** and never send a
+   matching message. The server applies the same filter again, but the
+   privacy promise only holds if those messages never leave the device.
+2. `POST /intake/share/batch` for the first sync: a list of
+   `{"text", "sender", "channel": "sms", "timestamp"}`, oldest first.
+3. `POST /intake/share` for each new message after that.
+
+Always send `timestamp`, the time the phone received the message in ISO
+format. The message's id is built from it, so sending the same message again
+returns the earlier decision instead of creating a duplicate.
+
+To reach the server from the phone, either:
+
+- connect by USB and run `adb reverse tcp:8000 tcp:8000`, then use
+  `http://localhost:8000`; or
+- start the server with `--host 0.0.0.0` and use the laptop's address on the
+  same Wi-Fi.
+
+Add the app's origin to `CORS_ORIGINS` in `backend/.env`:
+`https://localhost` for current Capacitor builds, `http://localhost` for older
+ones. Plain `http` to the laptop also needs cleartext allowed in the app's
+Capacitor configuration.
+
 ## WhatsApp gateway (optional)
 
 `POST /intake/whatsapp` accepts the form a WhatsApp gateway posts when a
