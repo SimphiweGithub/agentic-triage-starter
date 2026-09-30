@@ -1,27 +1,31 @@
-"""Label a collected message file one message at a time: s = scam, b = benign, u = unsure, q = quit.
+"""Label a collected message file one message at a time.
 
-Every answer is saved immediately, so you can stop and carry on later. Only
-lines still marked `?` are shown.
+s = scam, m = marketing, b = benign, u = unsure, q = quit. Every answer is
+saved immediately, so you can stop and carry on later. Only lines still
+marked `?` are shown; --reset clears every label first.
 """
 import argparse
 from pathlib import Path
 
-ANSWERS = {"s": "scam", "b": "benign", "u": "unsure"}
+ANSWERS = {"s": "scam", "m": "marketing", "b": "benign", "u": "unsure"}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("file", type=Path, nargs="?", default=Path("data/sa_messages.tsv"))
+    parser.add_argument("--reset", action="store_true", help="Clear every label and start again")
     args = parser.parse_args()
     lines = args.file.read_text(encoding="utf-8").splitlines()
+    if args.reset:
+        lines = ["?\t" + line.split("\t", 1)[1] for line in lines if "\t" in line]
     waiting = [index for index, line in enumerate(lines) if line.startswith("?\t")]
-    print(f"{len(waiting)} messages to label. s = scam, b = benign, u = unsure, q = quit.\n")
+    print(f"{len(waiting)} messages to label. s = scam, m = marketing, b = benign, u = unsure, q = quit.\n")
     for count, index in enumerate(waiting, start=1):
         _, text, *rest = lines[index].split("\t")
         print(f"[{count}/{len(waiting)}] from {rest[0] if rest else 'unknown'}\n  {text}")
         answer = ""
         while answer not in ANSWERS and answer != "q":
-            answer = input("  s / b / u / q: ").strip().lower()
+            answer = input("  s / m / b / u / q: ").strip().lower()
         if answer == "q":
             break
         lines[index] = ANSWERS[answer] + lines[index][1:]

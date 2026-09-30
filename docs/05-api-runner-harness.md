@@ -432,16 +432,22 @@ The labels must come from someone who did not write the gate's rules.
 
 Shows one unlabelled message at a time and saves each answer at once.
 
-- **Line 9 `ANSWERS`** — the keys: `s` for scam, `b` for benign, `u` for unsure.
-- **`main` (12–31)**:
-  - **16** — read every line of the file.
-  - **17** — `waiting`: the positions of lines still marked `?`.
-  - **19–24** — for each one, show the sender and the text, and ask until the
+- **Line 10 `ANSWERS`** — the keys: `s` scam, `m` marketing, `b` benign, `u` unsure.
+- **`main` (13–35)**:
+  - **16** — `--reset` clears every label so the file can be labelled again.
+  - **18** — read every line of the file.
+  - **19–20** — with `--reset`, put `?` back at the start of every line.
+  - **21** — `waiting`: the positions of lines still marked `?`.
+  - **23–28** — for each one, show the sender and the text, and ask until the
     answer is one of the keys or `q`.
-  - **25–26** — `q` stops; everything answered so far is already saved.
-  - **27–28** — replace the `?` with the label and write the whole file back
+  - **29–30** — `q` stops; everything answered so far is already saved.
+  - **31–32** — replace the `?` with the label and write the whole file back
     straight away, so nothing is lost if the window is closed.
-  - **30–31** — say how many are left.
+  - **34–35** — say how many are left.
+
+`marketing` exists because the first labelling round showed that "scam" and
+"unwanted marketing" were being mixed. `calibrate.py` counts marketing as not
+a scam (line 18), so the gate flagging it is a false alarm.
 
 ---
 

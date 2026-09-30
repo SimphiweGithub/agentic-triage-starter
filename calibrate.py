@@ -15,7 +15,7 @@ from domain.extract import extract_signals, redact
 from domain.gate import ask_jev, gate
 
 SCAM_LABELS = {"scam", "spam"}
-BENIGN_LABELS = {"benign", "ham"}
+BENIGN_LABELS = {"benign", "ham", "marketing"}  # unwanted marketing is not a scam, so a flag on it is a false alarm
 
 
 def load_labelled(path: Path) -> list[tuple[str, dict, bool]]:
