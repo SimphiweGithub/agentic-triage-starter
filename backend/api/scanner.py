@@ -40,12 +40,20 @@ def handle_mail(mailbox: dict, raw: str) -> str:
 
 
 def forget(decision: DecisionRecord, rt: TriageRuntime) -> None:
-    """Remove a safe email from a person's memory entirely, unless it joined an alert that also holds other messages."""
+    """Remove safe mail from memory; keep an empty audit stub only when another record refers to it."""
     with rt.lock:
         incident = rt.incidents.get(decision.incident_id)
-        if incident is None or incident.report_ids != [decision.report_id]:
+        if incident is None:
             return
-        rt.incidents.pop(decision.incident_id)
+        if incident.report_ids == [decision.report_id]:
+            rt.incidents.pop(decision.incident_id)
+        elif not any(item.report_id == decision.report_id for item in incident.actions) and not any(
+                item.report_id == decision.report_id for item in rt.reviews.values()):
+            incident.report_ids.remove(decision.report_id)
+        else:
+            report = rt.reports[decision.report_id]
+            report.payload, report.metadata = "", {"verdict": "safe"}
+            return
         rt.decisions.pop(decision.report_id, None)
         rt.reports.pop(decision.report_id, None)
 
@@ -82,9 +90,16 @@ def scan_gmail(store: Store, mailbox: dict, handle: Callable[[dict, str], str] =
     try:
         token = google_token(mailbox["owner_user_id"])
         for message_id in message_ids(token, query):
+            current = store.mailbox(mailbox["id"])
+            if current is None or current["status"] == "disconnected" or current["owner_user_id"] != mailbox["owner_user_id"]:
+                return read
             if store.seen(mailbox["id"], message_id):
                 continue
-            store.record_scanned(mailbox["id"], message_id, handle(mailbox, raw_email(token, message_id)))
+            raw = raw_email(token, message_id)
+            current = store.mailbox(mailbox["id"])
+            if current is None or current["status"] == "disconnected" or current["owner_user_id"] != mailbox["owner_user_id"]:
+                return read
+            store.record_scanned(mailbox["id"], message_id, handle(mailbox, raw))
             read += 1
         store.mark_checked(mailbox["id"])
     except HTTPException as error:

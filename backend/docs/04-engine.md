@@ -177,14 +177,23 @@ Runs an action a human approved.
 
 ## `core/runtime.py`
 
-`TriageRuntime` holds all state in memory and processes one message at a time.
+`TriageRuntime` holds one person's state in memory and processes one message at a time. The server keeps one runtime per person (`api/pool.py`), so nothing crosses from one person to another.
 
-### Setup (lines 18–67)
+### Setup (lines 17–55)
 
 - **17 `ENGAGED`** — the outcomes that count as "this action is already in
   hand": `PROPOSED`, `EXECUTED`, `HELD_FOR_REVIEW`. Used to stop repeats.
+- **20–27 `in_own_world`** — a decorator. The wrapped method runs holding the
+  lock, with this runtime's own world active (24), so the domain code's
+  `WORLD` means this person's world. Six methods carry it: `reset` (43),
+  `process` (93), `process_safely` (196), `step` (211), `decide_review` (219)
+  and `move_state` (245).
+- **30** — the constructor takes an optional `world`.
 - **31** — `self.lock` is a re-entrant lock: only one message is processed at
-  a time, so two web requests cannot corrupt the state.
+  a time for this person, so two web requests cannot corrupt the state. Other
+  people have their own locks and are not held up.
+- **32** — `self.world` is this runtime's own world. Given none, it is the
+  shared default world, so offline runs and the older tests behave as before.
 - **33–34** — asking for a model tier without an API key is an error at
   start-up, not halfway through a run.
 - **35–38** — build the correlator, with the model relation tier if enabled.
@@ -199,9 +208,9 @@ Runs an action a human approved.
   - `queue` and `position` — the replay file and how far through it we are.
   - `_incident_ids`, `_review_ids` — counters for new IDs.
   - `_report_numbers` — a counter for generated report IDs (line 54).
-  - `reset_world()` — also empty the simulated world.
+  - `reset_world()` — also empty this person's simulated world.
 
-### Small helpers (lines 69–104)
+### Small helpers (lines 57–91)
 
 - **57–61 `next_report_number`** — the next number from `_report_numbers`. It is
   never reused, even after the scanner forgets a safe email, so a report ID
@@ -218,7 +227,7 @@ Runs an action a human approved.
   review: `audience`, from the domain's `review_audience()`, and `not_before`,
   which is now plus the delay when a cooling-off was asked for.
 
-### `process` (lines 107–188) — the main path
+### `process` (lines 94–175) — the main path
 
 **Idempotency (96–99)** — the same report ID with the same content returns the
 earlier decision. The same ID with different content is an error.
@@ -282,7 +291,7 @@ action that was held or failed, or the assessment's own `review_reason`.
 - **168–172** — build the `DecisionRecord`.
 - **173–175** — store the report and the decision, and return the decision.
 
-### Failure handling (lines 190–220)
+### Failure handling (lines 177–204)
 
 **`record_failure` (177–194)** — for a message that could not be parsed or
 processed. It creates a new incident in `PENDING_REVIEW`, opens a review, and
@@ -293,12 +302,12 @@ used, it adds a suffix (161–162).
 A parse error goes straight to `record_failure`; an exception during
 `process` is caught and goes there too. Every message gets a decision.
 
-### Replay (lines 222–233)
+### Replay (lines 206–217)
 
 **`load_queue`** resets and stores a list of messages. **`step`** processes the
 next `steps` messages and advances `position`.
 
-### `decide_review` (lines 236–260) — the caregiver's decision
+### `decide_review` (lines 220–243) — the caregiver's decision
 
 - **223–225** — a review can be decided once.
 - **226–228** — rejected: mark it and stop. The action never runs.

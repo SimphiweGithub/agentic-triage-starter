@@ -117,11 +117,16 @@ def accept_invite(token: str, user_id: str = Depends(who)):
     problem = invite_problem(store.invite(token))
     if problem:
         raise HTTPException(410, problem)
-    if store.links_of(user_id):
+    links = store.links_of(user_id)
+    invited_person = store.invite(token)["person_id"]
+    if links and (len(links) != 1 or links[0] != {"person_id": invited_person, "role": "person"}):
         raise HTTPException(409, "This account is already linked to someone")
     if os.getenv("KINGUARD_DEV_OPEN") != "1":
         google_token(user_id)  # refuses, with a plain reason, if Gmail read access was not granted; the link stays usable
-    store.accept_invite(token, user_id)
+    try:
+        store.accept_invite(token, user_id)
+    except ValueError as error:
+        raise HTTPException(410, str(error)) from error
     set_clerk_role(user_id, "person")
     return _me(caller(user_id), store)
 

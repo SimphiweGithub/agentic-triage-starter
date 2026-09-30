@@ -87,12 +87,14 @@ each approach:
 
 ### 3.5 Architecture
 
-- One FastAPI process serves the API and a single static page. No CORS, no
-  build step, one command to run.
+- One FastAPI process serves the API and a developer console. The separate
+  React front end uses a Vite proxy locally; CORS is configurable for deployment.
+- Clerk sessions identify callers, SQLite stores people and Gmail connections,
+  and each protected person has a separate in-memory incident runtime.
 - `core/` is domain-neutral. Everything the brief will change lives in
   `domain/` and `prompts/`.
-- No action executor is connected. Proposals are recorded with an outcome:
-  proposed, held for review, suppressed as a duplicate, suppressed as a repeat.
+- The executor gates every action attempt. Reversible actions can run at once;
+  bank-related and uncertain actions wait for the correct person's approval.
 
 ## 4. Edge cases covered by tests
 
@@ -253,10 +255,11 @@ spam, not on the messages we are aiming at.
 
 - The dispute steps are general. No bank's exact menus or codes have been
   verified, so none are shown.
-- No login, and one protected person. The caregiver role is assumed, not
-  verified. Relatives are sometimes the abusers, so a real version must make
-  the protected person the one who consents and can see everything done.
-- State is in memory; a restart clears it.
+- Clerk verifies sign-in; the protected person connects and may disconnect their
+  own Gmail. Caregivers can look after several people. Independent review of
+  caregiver abuse and consent procedures is still needed for real use.
+- Incidents and reviews are in memory; a restart clears them. People, invites
+  and mailbox state persist in SQLite.
 - Masked message text leaves the machine for the models. A real version would
   need the person's informed consent for that.
 - The fuzzy text tier compares against every earlier message, which is fine

@@ -7,8 +7,8 @@ import { AddPersonForm } from './components/add-person-form'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
-import { formatTime } from './format'
-import type { InviteLook, Me } from './types'
+import { formatTime, reviewQuestion } from './format'
+import type { InviteLook, Me, Review } from './types'
 
 function Centered({ children }: { children: ReactNode }) {
   return (
@@ -138,7 +138,69 @@ export function ConnectScreen({ token, signedIn, onDone }: { token: string; sign
 export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void }) {
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [warnings, setWarnings] = useState<{ incident_id: string; message: string }[]>([])
+  const [reviews, setReviews] = useState<Review[]>([])
+  const [answering, setAnswering] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
   const mailbox = me.mailbox
+  const personId = me.person?.id
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!personId) return
+    let live = true
+    const refresh = async () => {
+      try {
+        const [nextWarnings, nextReviews] = await Promise.all([
+          api<{ incident_id: string; message: string }[]>(`/people/${personId}/outbox`),
+          api<Review[]>(`/people/${personId}/person/reviews?status=PENDING`),
+        ])
+        if (live) {
+          setWarnings(nextWarnings)
+          setReviews(nextReviews)
+        }
+      } catch {
+        if (live) toast.error('Could not load your KinGuard messages. Retrying.', { id: 'person-refresh' })
+      }
+    }
+    const first = setTimeout(refresh, 0)
+    const timer = setInterval(refresh, 5000)
+    return () => {
+      live = false
+      clearTimeout(first)
+      clearInterval(timer)
+    }
+  }, [personId])
+
+  async function answerIncident(incidentId: string, legitimate: boolean) {
+    setAnswering(incidentId)
+    try {
+      await post(`/people/${personId}/incidents/${incidentId}/feedback`, { legitimate })
+      toast.success('Your answer was saved.')
+      setWarnings((current) => current.filter((item) => item.incident_id !== incidentId))
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Could not save your answer.')
+    } finally {
+      setAnswering(null)
+    }
+  }
+
+  async function answerReview(reviewId: string, approved: boolean) {
+    setAnswering(reviewId)
+    try {
+      await post(`/people/${personId}/reviews/${reviewId}/decision`, { approved })
+      setReviews((current) => current.filter((item) => item.review_id !== reviewId))
+      toast.success('Your decision was saved.')
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Could not save your decision.')
+    } finally {
+      setAnswering(null)
+    }
+  }
 
   async function disconnect() {
     setBusy(true)
@@ -175,6 +237,38 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
               : 'KinGuard no longer reads your email. To connect again, ask for a new link.'}
         </CardDescription>
       </CardHeader>
+      {reviews.length > 0 && (
+        <CardContent className="grid gap-4">
+          <h2 className="text-lg font-bold">Decisions waiting for you</h2>
+          {reviews.map((review) => {
+            const waiting = review.not_before && new Date(review.not_before).getTime() > now
+            return (
+              <section key={review.review_id} className="grid gap-3 rounded-lg border p-4">
+                <p className="font-medium">{reviewQuestion(review)}</p>
+                {waiting && <p className="text-sm">You can confirm this after {formatTime(review.not_before!)}. You can say no now.</p>}
+                <div className="flex flex-wrap gap-2">
+                  <Button disabled={Boolean(waiting) || Boolean(answering)} onClick={() => answerReview(review.review_id, true)}>Yes, approve</Button>
+                  <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerReview(review.review_id, false)}>No, leave it</Button>
+                </div>
+              </section>
+            )
+          })}
+        </CardContent>
+      )}
+      {warnings.length > 0 && (
+        <CardContent className="grid gap-4">
+          <h2 className="text-lg font-bold">Warnings for you</h2>
+          {[...new Map(warnings.map((item) => [item.incident_id, item])).values()].map((warning) => (
+            <section key={warning.incident_id} className="grid gap-3 rounded-lg border p-4">
+              <p>{warning.message}</p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerIncident(warning.incident_id, true)}>This is mine</Button>
+                <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerIncident(warning.incident_id, false)}>I did not agree to this</Button>
+              </div>
+            </section>
+          ))}
+        </CardContent>
+      )}
       {connected && (
         <CardContent>
           <Button variant="outline" className="h-11 px-5 text-base" onClick={() => setConfirm(true)}>

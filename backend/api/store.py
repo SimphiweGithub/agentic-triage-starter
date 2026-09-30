@@ -130,9 +130,14 @@ class Store:
         """Mark the invite used, link the user as the protected person, and start watching their Gmail."""
         with self.lock:
             invite = self.invite(token)
+            problem = invite_problem(invite)
+            if problem:
+                raise ValueError(problem)
             person_id = invite["person_id"]
             self.db.execute("UPDATE invites SET accepted_at = ? WHERE token = ?", (stamp(now()), token))
+            self.db.execute("DELETE FROM links WHERE person_id = ? AND role = 'person' AND user_id != ?", (person_id, user_id))
             self.db.execute("INSERT OR REPLACE INTO links VALUES (?, ?, 'person')", (person_id, user_id))
+            self.db.execute("DELETE FROM scanned WHERE mailbox_id IN (SELECT id FROM mailboxes WHERE person_id = ? AND kind = 'gmail')", (person_id,))
             self.db.execute("DELETE FROM mailboxes WHERE person_id = ? AND kind = 'gmail'", (person_id,))  # one Gmail per person for now
             mailbox_id = f"M{secrets.token_hex(4)}"
             self.db.execute("INSERT INTO mailboxes (id, person_id, kind, label, status, owner_user_id, connected_at) VALUES (?, ?, 'gmail', 'Gmail', 'connected', ?, ?)",

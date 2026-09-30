@@ -8,8 +8,9 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from twilio.request_validator import RequestValidator
 
-from api.auth import active_caregiver_person, active_member_person
+from api.auth import Caller, active_caregiver_person, active_member_person, dev_open, member
 from api.pool import default_runtime, runtime_for
 from api.store import get_store
 from core.ingest import kept, read_text_records, safe_parse
@@ -117,10 +118,21 @@ def intake_share(message: SharedMessage, rt: TriageRuntime = Depends(caregiver_r
 @gateway_router.post("/intake/whatsapp", tags=["intake"])
 async def intake_whatsapp(request: Request, person_id: str | None = None):
     """Webhook for a WhatsApp gateway (Twilio format): a form with From and Body. The gateway is pointed at one person's address. The message is taken in like a shared SMS."""
+    form = parse_qs((await request.body()).decode("utf-8", "replace"))
+    if not dev_open():
+        token = os.getenv("TWILIO_AUTH_TOKEN")
+        if not token:
+            raise HTTPException(503, "WhatsApp webhook is not configured")
+        origin = os.getenv("TWILIO_PUBLIC_ORIGIN", "").rstrip("/")
+        url = f"{origin}{request.url.path}" if origin else str(request.url).split("?", 1)[0]
+        if request.url.query:
+            url += f"?{request.url.query}"
+        fields = {key: values[0] for key, values in form.items()}
+        if not RequestValidator(token).validate(url, fields, request.headers.get("X-Twilio-Signature", "")):
+            raise HTTPException(403, "Invalid WhatsApp gateway signature")
     if person_id is not None and get_store().person(person_id) is None:
         raise HTTPException(404, "Person not found")
     rt = runtime_for(person_id) if person_id else default_runtime()
-    form = parse_qs((await request.body()).decode("utf-8", "replace"))
     text, sender = form.get("Body", [""])[0], form.get("From", [""])[0].removeprefix("whatsapp:")
     if text.strip():
         _take_in(share_to_row(text, sender, "whatsapp", _now()), rt)
@@ -141,12 +153,15 @@ def ingest(report: RawInputReport, rt: TriageRuntime = Depends(caregiver_runtime
 @person_router.get("/outbox", tags=["person"], response_model=list[PersonMessage])
 def outbox(rt: TriageRuntime = Depends(member_runtime)):
     """Warnings written for the protected person, oldest first."""
-    return rt.world.outbox
+    answered = {report.metadata.get("incident_id") for report in rt.reports.values() if report.metadata.get("feedback")}
+    return [item for item in rt.world.outbox if item["incident_id"] not in answered]
 
 
 @person_router.post("/incidents/{incident_id}/feedback", tags=["person"], response_model=DecisionRecord)
-def feedback(incident_id: str, answer: Feedback, rt: TriageRuntime = Depends(member_runtime)):
+def feedback(incident_id: str, answer: Feedback, rt: TriageRuntime = Depends(member_runtime), me: Caller = Depends(member)):
     """The person's own answer about an incident. It is evidence, processed like any other report."""
+    if not dev_open() and me.role != "person":
+        raise HTTPException(403, "Only the person can answer about their own incident")
     if incident_id not in rt.incidents:
         raise HTTPException(404, "Incident not found")
     text = "The person says this is legitimate." if answer.legitimate else "The person says they did not agree to this."
@@ -198,10 +213,19 @@ def guardian_briefs(rt: TriageRuntime = Depends(caregiver_runtime)):
             if item.status == "PENDING" and item.audience == "CAREGIVER"]
 
 
-@router.post("/reviews/{review_id}/decision", tags=["caregiver"], response_model=ReviewItem)
-def decide(review_id: str, decision: ReviewDecision, rt: TriageRuntime = Depends(caregiver_runtime)):
+@person_router.get("/person/reviews", tags=["person"], response_model=list[ReviewItem])
+def person_reviews(status: str | None = None, rt: TriageRuntime = Depends(member_runtime)):
+    """Only questions addressed to the protected person, without exposing caregiver reviews."""
+    return [item for item in rt.snapshot()["reviews"] if item.audience == "PERSON" and (status is None or item.status == status)]
+
+
+@person_router.post("/reviews/{review_id}/decision", tags=["person"], response_model=ReviewItem)
+def decide(review_id: str, decision: ReviewDecision, rt: TriageRuntime = Depends(member_runtime), me: Caller = Depends(member)):
     """Approve or reject. An approved action runs now; a rejected one never runs. 409 during a cooling-off period."""
     try:
+        review = rt.reviews[review_id]
+        if not dev_open() and review.audience != ("PERSON" if me.role == "person" else "CAREGIVER"):
+            raise HTTPException(403, "This decision is addressed to someone else")
         return rt.decide_review(review_id, decision.approved)
     except KeyError as error:
         raise HTTPException(404, "Review not found") from error

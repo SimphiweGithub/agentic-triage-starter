@@ -18,12 +18,12 @@ The ways into the engine, the way to score it, and the optional model code.
   call it, only with GET and POST, and only with the `Content-Type` and
   `Authorization` headers. `Authorization` carries the Clerk session token
   that every route except `/health` and the WhatsApp webhook needs.
-- **Lines 25–26** — the four routers (open, person, caregiver, people) are
-  served under `/api`.
+- **Lines 25–31** — health and people routes are served under `/api`.
+  Gateway, person and caregiver routes are served under `/api/people/{person_id}`;
+  development mode also exposes unscoped console routes under `/api`.
 - **Line 28** — open the store (`api/store.py`).
-- **Lines 29–31** — if the server has its own IMAP mailbox, make sure it is
-  listed as a "forwarded inbox" mailbox of each person already looked after.
-  A person added later gets it when they are added (`api/people.py`).
+- **Lines 29–31** — if the server has its own IMAP mailbox, list it under the
+  first protected person only. A first person added later gets it in `api/people.py`.
 - **Line 32** — start the live mailbox thread. It does nothing unless
   `IMAP_HOST` is set. Each email goes through `forwarded_handler`, so it is
   kept under the same retention rules as Gmail, and each check's result is
@@ -41,20 +41,20 @@ The ways into the engine, the way to score it, and the optional model code.
 
 The contract for the front end is in `API.md`. This section explains the code.
 
-**Lines 22–24** — three routers, by who may call them:
-- `router` (line 22) needs a signed-in **caregiver**. Almost every route is here.
-- `person_router` (line 23) accepts the caregiver **or the protected person**:
-  the two routes the person may use, `GET /outbox` and the incident feedback.
-- `open_router` (line 24) needs no session: `GET /health`, and the WhatsApp
-  gateway webhook, which a gateway cannot sign in to.
+**Lines 24–28** — four routers, by who may call them:
+- `router` (line 24) needs a caregiver linked to the person in the path.
+- `person_router` (line 25) accepts that caregiver or the protected person:
+  outbox, feedback and reviews addressed to the person.
+- `open_router` (line 26) needs no session: `GET /health`.
+- `gateway_router` (line 27) accepts signed Twilio webhooks without a Clerk session.
 
 Each `dependencies=[Depends(...)]` runs `api/auth.py` before the route body.
-Line 11 imports `caregiver` and `member` from there.
+Line 13 imports the scoped role checks from there.
 
-**Line 25** — `runtime` is the single `TriageRuntime` for the whole server. The
-incidents, reviews and reports live in it, in memory; restarting the server
-clears them. What must survive a restart (people, invites, mailboxes) is in
-`api/store.py`.
+**Lines 28–38** — `runtime` is the shared development console runtime.
+`caregiver_runtime` and `member_runtime` select the separate in-memory runtime
+for the person in the URL. Restarting clears incidents and reviews, while
+`api/store.py` persists people, invites and mailboxes.
 
 ### Request and response shapes (lines 28–70)
 
@@ -94,72 +94,73 @@ reply is sent.
 
 | Lines | Method and path | Group | What it does |
 |---|---|---|---|
-| 93–96 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
-| 99–102 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
-| 105–112 | `POST /intake/whatsapp` | intake (open) | Webhook for a WhatsApp gateway; takes the message in like a shared SMS |
-| 115–121 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
-| 126–129 | `GET /outbox` | person | The warnings written for the person |
-| 132–140 | `POST /incidents/{id}/feedback` | person | The person's own answer about an incident |
-| 145–148 | `GET /incidents` | caregiver | Every incident |
-| 151–161 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
-| 164–169 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
-| 172–175 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
-| 179–183 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
-| 186–194 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
-| 197–205 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
-| 210–214 | `GET /health` | system | Confirms the server is up, guardian status, and optional parts: mailbox, Jev, Gemini, live lookups and Gmail scanning (true when `CLERK_SECRET_KEY` is set). No session needed |
-| 217–221 | `GET /state` | system | Everything in one call, plus the simulated world |
-| 225–229 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
-| 232–236 | `POST /reset` | system | Empty everything |
-| 239–246 | `POST /replay` | system | Reset, then process a list of reports |
-| 249–257 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 260–264 | `POST /replay/step` | system | Process the next messages in the queue |
+| 106–109 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
+| 112–115 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
+| 118–139 | `POST /intake/whatsapp` | intake (signed gateway) | Validate Twilio's signature, then take in the message |
+| 142–148 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
+| 153–157 | `GET /outbox` | person | Warnings not yet answered by the person |
+| 160–170 | `POST /incidents/{id}/feedback` | person | Only the person may answer about their incident |
+| 175–178 | `GET /incidents` | caregiver | Every incident |
+| 181–191 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
+| 194–199 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
+| 202–206 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
+| 209–213 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
+| 216–219 | `GET /person/reviews` | person | Only reviews addressed to the protected person |
+| 222–233 | `POST /reviews/{id}/decision` | person or caregiver | Only the addressed role may approve or reject |
+| 236–244 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
+| 249–254 | `GET /health` | system | Confirms the server is up and optional parts. No session needed |
+| 257–262 | `GET /state` | system | Everything in one call, plus the simulated world |
+| 265–269 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
+| 272–276 | `POST /reset` | system | Empty this person's runtime |
+| 279–286 | `POST /replay` | system | Reset, then process a list of reports |
+| 289–297 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 300–304 | `POST /replay/step` | system | Process the next messages in the queue |
 
-**`feedback` in detail (135–143)**
-- **135–136** — unknown incident: error 404.
-- **137** — a sentence describing the answer.
-- **138–139** — the answer is wrapped as a `RawInputReport` with `source`
+**`feedback` in detail (160–170)**
+- **163–164** — only the protected person may answer outside development mode.
+- **165–166** — unknown incident: error 404.
+- **167** — a sentence describing the answer.
+- **168–169** — the answer is wrapped as a `RawInputReport` with `source`
   `"person"`. Its metadata names the incident (so the correlator links it
   explicitly) and carries the `feedback` value.
-- **140** — it is processed like any other message. The person's answer is
+- **170** — it is processed like any other message. The person's answer is
   evidence that goes through the same policy; it is not a command.
 
-**`intake_whatsapp` in detail (105–112)**
-- **106** — `async`, because reading the raw request body has to be awaited.
-- **108** — a WhatsApp gateway (this follows Twilio's format) posts a form,
-  not JSON. `parse_qs` turns `From=...&Body=...` into a dictionary. Reading
-  the body ourselves avoids adding a form-parsing package.
-- **109** — `text` is the message; `sender` is the number, with the
+**`intake_whatsapp` in detail (118–139)**
+- **121** — parse Twilio's form body, including every field Twilio sent.
+- **122–132** — outside development mode, require `TWILIO_AUTH_TOKEN` and
+  validate `X-Twilio-Signature` using Twilio's SDK. `TWILIO_PUBLIC_ORIGIN`
+  supplies the external host and scheme when a proxy changes the request URL;
+  path and query are kept in the signed URL. An invalid signature returns 403.
+- **133–135** — choose the named person's runtime, or return 404.
+- **136** — `text` is the message; `sender` is the number, with the
   `whatsapp:` prefix removed.
-- **110–111** — an empty message is ignored; otherwise it goes through the
+- **137–138** — an empty message is ignored; otherwise it goes through the
   same `_take_in` path as a shared SMS, with the channel set to `whatsapp`.
-- **112** — reply with an empty response. A gateway would send any text in the
+- **139** — reply with an empty response. A gateway would send any text in the
   reply back to the sender, and the agent must never answer a scammer.
 
-Anyone who can reach the server can post to this route. A real deployment
-would check the gateway's signature on each request; that is not built.
+The tests sign simulated Twilio posts; a live gateway has not been verified.
 
-**`guardian_briefs` in detail (179–183)** — for every review that is
+**`guardian_briefs` in detail (209–213)** — for every review that is
 `PENDING` and addressed to the `CAREGIVER`, build a brief from the review and
 the decision that opened it.
 
-**`reviews` in detail (172–176)** — `status` and `audience` are optional query
+**`reviews` in detail (202–206)** — `status` and `audience` are optional query
 parameters. `?status=PENDING&audience=PERSON` returns what is waiting for the
 person themselves; with nothing, every review is returned.
 
-**`replay_load` in detail (249–257)**
-- **253** — strip an invisible marker from the start of the text, read the
+**`replay_load` in detail (289–297)**
+- **292** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **254–255** — an unsupported file type returns error 400.
-- **256** — parse every row safely and hand the list to the runtime's queue.
+- **293–294** — an unsupported file type returns error 400.
+- **295** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.
 
-What the API does not have yet: more than one protected person. Incidents and
-reviews are one shared pool, so the server looks after one person (`api/store.py`
-refuses a second). Every route is scoped by role now, but stage 2 must also
-partition this pool by person before a second person can be added.
+Each caregiver may add several people. `api/pool.py` gives each person a
+separate runtime, and `api/auth.py` checks the person id in each scoped route.
 
 **Development switch.** With `KINGUARD_DEV_OPEN=1`, `api/auth.py` skips Clerk and
 the routes open up, so the plain console in `static/` and local scripts still
@@ -346,30 +347,32 @@ What must survive a restart, in a SQLite file (`KINGUARD_DB`, default
 - **51–59** — `close`, and `reset`, which empties every table for tests.
 - **61–67** — `_one` and `_all` turn rows into plain dictionaries.
 - **70–76** — `people`, `person`.
-- **78–87 `create_person`** — refuses if anyone is already looked after (stage 1
-  is one person per server), otherwise adds the person and links the creator
-  as their caregiver.
-- **89–92 `link_of`** — the person and role for a user, or `None`.
-- **96–103 `create_invite`** — a random, unguessable, single-use token.
-- **105–112** — `invite`, and `pending_invites` (not used, cancelled or expired).
-- **114–119 `cancel_invite`** — only an invite still waiting can be cancelled.
-- **121–133 `accept_invite`** — marks the invite used, links the user as the
-  person, replaces any earlier Gmail mailbox (one per person for now) and adds
-  a new one, `connected`.
-- **137–144** — `mailbox` and `mailboxes`, each with `checked`, how many
+- **78–87 `create_person`** — adds a person and links the creator as caregiver;
+  one caregiver may look after several people.
+- **87–103 `links_of`, `people_of`, `first_person`** — find a user's links,
+  their people, and the first person assigned the server's IMAP inbox.
+- **104–112 `create_invite`** — a random, unguessable, single-use token.
+- **113–121** — `invite`, and `pending_invites` (not used, cancelled or expired).
+- **122–128 `cancel_invite`** — only an invite still waiting can be cancelled.
+- **129–148 `accept_invite`** — checks again that the link remains usable,
+  marks it used, removes an earlier
+  protected-person account link for this profile, links the accepting user,
+  clears verdicts belonging to the replaced mailbox, and adds a new connected
+  Gmail mailbox. The same account can reconnect through a fresh invite.
+- **150–158** — `mailbox` and `mailboxes`, each with `checked`, how many
   messages have a verdict.
-- **146–156 `ensure_forwarded`** — the server's own IMAP mailbox, added once.
-- **158–161 `disconnect`** — Gmail mailbox becomes `disconnected`.
-- **163–167 `mark_checked`** — a good scan: `connected`, time noted, errors
+- **159–170 `ensure_forwarded`** — the server's own IMAP mailbox, added once.
+- **171–175 `disconnect`** — Gmail mailbox becomes `disconnected`.
+- **176–181 `mark_checked`** — a good scan: `connected`, time noted, errors
   cleared. Never wakes a `disconnected` mailbox.
-- **169–181 `mark_failure`** — a revoked or refused token (`permanent`) is a
+- **182–195 `mark_failure`** — a revoked or refused token (`permanent`) is a
   `problem` at once. Anything else only becomes one once failures have lasted
   `OUTAGE_MINUTES`.
-- **183–190** — `seen` and `record_scanned`: has this message been handled, and
+- **196–205** — `seen` and `record_scanned`: has this message been handled, and
   remember its verdict.
-- **193–203 `invite_problem`** — why an invite cannot be used, in words the
+- **206–219 `invite_problem`** — why an invite cannot be used, in words the
   person would understand, or `None` if it can.
-- **206–212 `get_store`** — one shared store, opened on first use so tests can
+- **222–228 `get_store`** — one shared store, opened on first use so tests can
   point `KINGUARD_DB` at `:memory:` first.
 
 ---
@@ -379,36 +382,38 @@ What must survive a restart, in a SQLite file (`KINGUARD_DB`, default
 Who is looked after, who looks after them, and how the person connects their
 own Gmail. The contract is in `API.md`.
 
-- **11** — these routes are served under `/api` too, tagged `people`.
-- **14–16 `NewPerson`** — a name (1–80 characters) and an optional relation.
-- **19–23 `_mailbox`** — what a mailbox looks like to the front end: its state,
+- **12** — these routes are served under `/api` too, tagged `people`.
+- **15–17 `NewPerson`** — a name (1–80 characters) and an optional relation.
+- **20–23 `_mailbox`** — what a mailbox looks like to the front end: its state,
   when it was last checked, the last error, how many messages were checked.
   Never a token, never a message.
-- **25–26 `_invite`** — token and dates.
-- **29–37 `_me`** — the signed-in user's role and person; `can_add_person` is
-  true only for someone with no link while nobody is looked after yet; a
-  protected person also gets their own Gmail mailbox's state.
-- **40–43 `GET /me`** — who you are.
-- **46–59 `POST /people`** — the first caregiver adds the person. Already
-  linked: 409. Someone already looked after: 409. Adds the forwarded inbox if
-  the server has one (56–57), and stores the `caregiver` role in Clerk too.
-- **62–65 `GET /people/{id}/mailboxes`** — the person's mailboxes and whether
+- **26–27 `_invite`** — token and dates.
+- **30–31 `_person`** — id, name and relation without private state.
+- **34–43 `_me`** — the signed-in user's role, first person and full `people`
+  list. Caregivers may add more people; a protected person sees their own
+  Gmail mailbox state.
+- **46–49 `GET /me`** — who you are.
+- **52–64 `POST /people`** — a caregiver adds another person; an unlinked user
+  becomes a caregiver. The first person gets the optional forwarded inbox.
+- **67–76 `GET /people/summary`** — each caregiver's people with pending
+  review and mailbox problem counts.
+- **79–82 `GET /people/{id}/mailboxes`** — the person's mailboxes and whether
   mail is being checked. 404 for anyone else's person.
-- **68–70 `GET /people/{id}/invites`** — invites still waiting.
-- **73–76 `POST /people/{id}/invites`** — a new single-use link, valid 7 days.
-- **79–83 `POST .../invites/{token}/cancel`** — withdraw an invite; 404 if it is
+- **85–87 `GET /people/{id}/invites`** — invites still waiting.
+- **90–93 `POST /people/{id}/invites`** — a new single-use link, valid 7 days.
+- **96–100 `POST .../invites/{token}/cancel`** — withdraw an invite; 404 if it is
   not waiting any more.
-- **86–93 `GET /invites/{token}`** — no sign-in needed. Says whether the link
+- **103–110 `GET /invites/{token}`** — no sign-in needed. Says whether the link
   works, and if so whose name is on it, and nothing else.
-- **96–109 `POST /invites/{token}/accept`** — the person signed in with Google
+- **113–131 `POST /invites/{token}/accept`** — the person signed in with Google
   from the link.
-  - **100–102** — an unusable invite is 410 with a plain reason.
-  - **103–104** — an account already linked to someone is 409; this also stops a
-    caregiver accepting their own invite.
-  - **105–106** — ask Clerk for the Google token. If Gmail read access was not
+  - **117–119** — an unusable invite is 410 with a plain reason.
+  - **120–123** — the same protected-person account may reconnect; an account
+    linked elsewhere gets 409, including a caregiver's account.
+  - **124–125** — ask Clerk for the Google token. If Gmail read access was not
     granted this refuses with a clear reason and the invite stays usable.
-  - **107–109** — link them, store the `person` role in Clerk, return `_me`.
-- **112–124 `POST /me/disconnect`** — only the person whose mail it is. Tells
+  - **126–131** — link them, store the `person` role in Clerk, return `_me`.
+- **134–146 `POST /me/disconnect`** — only the person whose mail it is. Tells
   Google to revoke the token (best effort), marks the mailbox `disconnected`
   and stops scanning at once. Only a new invite reconnects it.
 
@@ -420,33 +425,34 @@ Reads each connected mailbox in the background and keeps only what the
 caregiver needs. Safe mail leaves an id and a verdict. Flagged mail keeps its
 text until its alert is resolved. The caregiver never browses the mailbox.
 
-- **21–23** — look back 14 days on first connection, re-check 120 seconds before
+- **23–25** — look back 14 days on first connection, re-check 120 seconds before
   the last scan so nothing slips between two, and which states count as resolved.
-- **26–36 `handle_mail`** — one email in, then the retention rules. Returns
+- **28–39 `handle_mail`** — one email in, then the retention rules. Returns
   `withheld` (a one-time code: nothing stored), `safe`, or `flagged`. A flagged
-  report is tagged with the mailbox it came from (34–35) so it can be blanked
+  report is tagged with the mailbox it came from (37–38) so it can be blanked
   later.
-- **39–47 `forget`** — removes a safe email from memory entirely: its report,
-  decision and alert. Unless the alert holds other messages too, in which case
-  it stays.
-- **50–67 `blank_resolved`** — for mailbox mail whose alert is resolved or
-  closed, blank the text and sender (62–64), and the alert's summary (65–66).
+- **42–58 `forget`** — removes a safe email's report and decision. If it
+  joined an alert, remove its report id there too. When an action or review
+  still refers to the report, keep only an empty audit stub with a safe verdict.
+- **61–79 `blank_resolved`** — for mailbox mail whose alert is resolved or
+  closed, blank the text and sender (74–76), and the alert's summary (77–78).
   An alert made from a message the caregiver pasted by hand is left alone.
-- **70–90 `scan_gmail`** — one pass over one Gmail mailbox.
-  - **72–76** — first scan: `newer_than:14d`; later: `after:<last check minus 120s>`.
-  - **79–85** — get the person's token from Clerk, list the ids, skip those
-    already seen, read the rest, record each verdict, then mark the mailbox
+- **82–111 `scan_gmail`** — one pass over one Gmail mailbox.
+  - **84–89** — first scan: `newer_than:14d`; later: `after:<last check minus 120s>`.
+  - **92–104** — get the person's token from Clerk; before and after fetching
+    each message, confirm its mailbox is still connected to the same owner.
+    Skip ids already seen, read the rest, record each verdict, then mark it
     checked.
-  - **86–87** — Google refusing the token (401, 403) is a permanent failure.
-  - **88–89** — anything else, such as the network, is temporary and becomes a
+  - **106–107** — Google refusing the token (401, 403) is a permanent failure.
+  - **108–109** — anything else, such as the network, is temporary and becomes a
     problem only after 15 minutes.
-- **93–98 `scan_once`** — every Gmail mailbox not `disconnected`, then blank
+- **112–119 `scan_once`** — every Gmail mailbox not `disconnected`, then blank
   what is resolved.
-- **101–109 `forwarded_handler`** — the same rules for the server's own IMAP
+- **120–130 `forwarded_handler`** — the same rules for the server's own IMAP
   mailbox, recording a verdict per email under a hash of its text. With nobody
   looked after yet it behaves as before.
-- **112–119 `note_forwarded`** — record whether the last IMAP check worked.
-- **122–139 `start_scanning`** — without `CLERK_SECRET_KEY` do nothing, since
+- **131–140 `note_forwarded`** — record whether the last IMAP check worked.
+- **141–159 `start_scanning`** — without `CLERK_SECRET_KEY` do nothing, since
   tokens come from Clerk. Otherwise a background thread scans every
   `SCAN_SECONDS` (default 60) and never stops on an error.
 

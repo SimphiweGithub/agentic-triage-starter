@@ -6,11 +6,17 @@ collects two human answers: the person's "this is mine" and the caregiver's
 approve or reject.
 
 - Base address: `http://127.0.0.1:8000/api`
+- Unless a table shows a full `/people/{id}/...` path, calls about an incident,
+  review, intake or state use `/people/{id}` before the listed path. The caregiver
+  gets `{id}` from `GET /me` (`people`); the protected person gets their own id
+  from `GET /me` (`person`). Only development mode exposes unscoped calls.
 - Interactive documentation with every schema: `http://127.0.0.1:8000/docs`
-- All bodies are JSON. Every route except `GET /health` and `POST /intake/whatsapp`
+- API bodies are JSON, except the form-encoded WhatsApp webhook. Every route except `GET /health`,
+  `GET /invites/{token}` and `POST /intake/whatsapp`
   needs a signed-in Clerk session: `Authorization: Bearer <token>` (see
   [Signing in and roles](#signing-in-and-roles)).
-- State is in memory. Restarting the server, or `POST /reset`, clears it.
+- Incidents and reviews are in memory per person. Restarting the server, or that person's
+  `POST /reset`, clears them. People, invites and mailbox status live in SQLite.
 
 ## Running it
 
@@ -24,8 +30,10 @@ Two ways to connect a front end:
 
 1. **Same origin.** Put the built front end in `static/` and it is served from
    the same port. Nothing else to configure.
-2. **Separate dev server.** Set `CORS_ORIGINS` in `.env` to the front end's
-   address, for example `CORS_ORIGINS=http://localhost:5173`, and restart.
+2. **Vite dev server.** The sibling `frontend/` app proxies `/api` to this
+   backend, so no CORS setting is needed for local development.
+3. **Separate deployment.** Set `CORS_ORIGINS` in `.env` to the front end's
+   address and `VITE_API_URL` to the backend origin when building the front end.
 
 ## The three screens and the calls they need
 
@@ -46,8 +54,10 @@ withheld: nothing is stored and no decision is made. Show that as "not kept".
 
 | Call | Returns |
 |---|---|
-| `GET /outbox` | `[{"incident_id": "I0001", "message": "..."}]`, oldest first |
+| `GET /people/{id}/outbox` | `[{"incident_id": "I0001", "message": "..."}]`, oldest first; answered warnings are hidden |
 | `POST /incidents/{incident_id}/feedback` with `{"legitimate": true}` | A decision |
+| `GET /people/{id}/person/reviews?status=PENDING` | Reviews addressed to the person |
+| `POST /people/{id}/reviews/{review_id}/decision` with `{"approved": true}` | The updated person review; approval respects `not_before` |
 
 `message` is written for the person and is safe to show as it is. When they
 answer "this is mine", post the feedback. For a low-risk incident the agent
@@ -212,11 +222,13 @@ delivered at once.
 
 ## WhatsApp gateway (optional)
 
-`POST /intake/whatsapp` accepts the form a WhatsApp gateway posts when a
-message arrives (Twilio's format: `From` and `Body`). Pointing a gateway's
-webhook at it makes forwarded WhatsApp messages arrive without anyone calling
-the API. It needs a gateway account and a public address for this server, and
-has only been tested with a simulated post.
+`POST /people/{id}/intake/whatsapp` accepts Twilio's form fields (`From` and
+`Body`). Set `TWILIO_AUTH_TOKEN` in `backend/.env`; outside development mode,
+requests without a valid `X-Twilio-Signature` receive `403`, and an unset token
+returns `503`. Set `TWILIO_PUBLIC_ORIGIN` to the public scheme and host Twilio
+calls when a proxy changes the request's internal URL. The validator uses the
+full path, query string and all form fields. This has only been tested with
+signed simulated posts, not a live gateway. [Twilio's signature guidance](https://www.twilio.com/docs/usage/webhooks/webhooks-security).
 
 ## Live inbox
 
@@ -234,9 +246,9 @@ metadata (`role`):
 
 | Role | Who | What they may call |
 |---|---|---|
-| `caregiver` | The person who looks after someone | Everything below |
-| `person` | The protected person, who connected their own Gmail | `GET /me`, `POST /me/disconnect`, `GET /outbox`, `POST /incidents/{id}/feedback` |
-| none | Signed in but not linked to anyone yet | `GET /me`, `POST /people` (only if nobody is looked after yet), `POST /invites/{token}/accept` |
+| `caregiver` | The person who looks after someone | Routes scoped to every person they look after, including caregiver reviews |
+| `person` | The protected person, who connected their own Gmail | `GET /me`, `POST /me/disconnect`, their outbox and feedback, their pending reviews and decisions |
+| none | Signed in but not linked to anyone yet | `GET /me`, `POST /people`, `POST /invites/{token}/accept` |
 
 | Code | Meaning |
 |---|---|
@@ -245,8 +257,9 @@ metadata (`role`):
 | `404` | The person, invite or mailbox is not yours, or does not exist |
 | `503` | `CLERK_SECRET_KEY` is not set on the server |
 
-This server looks after **one** person for now, and incidents are one shared
-pool. Partitioning them by person is the next stage.
+One caregiver may look after several people. Each person's incidents, reviews
+and simulated world are separate in memory. Routes under `/people/{id}` check
+that the caller is linked to that person.
 
 ## People, invites and mailboxes
 
@@ -256,14 +269,14 @@ caregiver only ever sees alerts.
 
 | Call | Who | Returns |
 |---|---|---|
-| `GET /me` | anyone signed in | `{user_id, role, person, can_add_person, mailbox}`. `person` is `{id, name, relation}` or null; `mailbox` is the person's own Gmail state, for the `person` role |
-| `POST /people` with `{"name": "...", "relation": "..."}` | unlinked user | The same as `GET /me`. The caller becomes the caregiver. `409` if someone is already looked after |
+| `GET /me` | anyone signed in | `{user_id, role, person, people, can_add_person, mailbox}`. `people` lists a caregiver's people; `mailbox` is the person's own Gmail state |
+| `POST /people` with `{"name": "...", "relation": "..."}` | caregiver or unlinked user | The same as `GET /me`. An unlinked caller becomes the caregiver |
 | `GET /people/{id}/mailboxes` | caregiver | `[{id, kind, label, status, connected_at, last_checked, last_error, checked}]` |
 | `POST /people/{id}/invites` | caregiver | `{token, created_at, expires_at}`. Single use, valid 7 days |
 | `GET /people/{id}/invites` | caregiver | Invites still waiting |
 | `POST /people/{id}/invites/{token}/cancel` | caregiver | `{status: "cancelled"}` |
 | `GET /invites/{token}` | **nobody: no sign-in** | `{valid, problem, person_name}`. `person_name` is set only when the link works |
-| `POST /invites/{token}/accept` | the person, signed in with Google | The same as `GET /me`. `410` with a plain reason if the link is cancelled, used or expired; `403` if Google access to Gmail was not granted (the link stays usable); `409` if the account is already linked |
+| `POST /invites/{token}/accept` | the person, signed in with Google | The same as `GET /me`. A person already linked to this same profile may reconnect. An account linked elsewhere gets `409` |
 | `POST /me/disconnect` | the person | The same as `GET /me`. Stops scanning at once and asks Google to revoke the token |
 
 **Mailbox `kind`** is `gmail` (the person's own, one per person) or `forwarded`
@@ -317,6 +330,6 @@ message in it demonstrates.
 - The bank, company registry and sender blocklist are simulated. Nothing
   leaves the machine except the masked message text sent to the models and
   domain names sent to the public registration lookup.
-- There is one protected person. Sign-in is on by default. `KINGUARD_DEV_OPEN=1`
+- Each protected person has a separate runtime. Sign-in is on by default. `KINGUARD_DEV_OPEN=1`
   turns it off for the plain console and local scripts; never set it on a server
   anyone else can reach.

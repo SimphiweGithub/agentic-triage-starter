@@ -31,9 +31,9 @@ for each in (gateway_router, person_router, router):
         app.include_router(each, prefix="/api", include_in_schema=False)
 
 store = get_store()
-if os.getenv("IMAP_HOST"):
-    for person in store.people():
-        store.ensure_forwarded(person["id"], os.getenv("IMAP_USER", "Forwarded inbox"))
+first = store.first_person()
+if os.getenv("IMAP_HOST") and first:
+    store.ensure_forwarded(first["id"], os.getenv("IMAP_USER", "Forwarded inbox"))  # the server's one IMAP mailbox belongs to the first person
 start_polling(forwarded_handler(store), lambda error: note_forwarded(store, error))  # the server's own mailbox; needs IMAP_HOST
 start_scanning(store)  # each person's connected Gmail; needs CLERK_SECRET_KEY
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")

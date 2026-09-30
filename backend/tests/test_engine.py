@@ -11,8 +11,10 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlencode
 
 from fastapi.testclient import TestClient
+from twilio.request_validator import RequestValidator
 
 from core.correlator import Correlator
 from core.fsm import transition_state
@@ -732,13 +734,69 @@ class AccessTests(unittest.TestCase):
         self.assertTrue({"token", "owner_user_id", "payload"}.isdisjoint(listed[0]))   # state only, never a token or a message
         self.assertEqual(self.client.get("/api/people/summary").json()[0]["problems"], 1)
 
+    def test_the_same_person_can_reconnect_after_disconnecting(self):
+        person_id = self.add_person()
+        self.invite_and_accept(person_id)
+        self.user = "person_1"
+        with patch.object(people, "google_token", return_value="google-token"), patch.object(people, "revoke"):
+            self.assertEqual(self.client.post("/api/me/disconnect").status_code, 200)
+        old_box = get_store().mailboxes(person_id)[0]["id"]
+        self.user = "caregiver_1"
+        token = self.client.post(f"/api/people/{person_id}/invites").json()["token"]
+        self.user = "person_1"
+        with patch.object(people, "google_token", return_value="google-token"):
+            connected = self.client.post(f"/api/invites/{token}/accept")
+        self.assertEqual(connected.status_code, 200)
+        self.assertEqual(connected.json()["mailbox"]["status"], "connected")
+        self.assertNotEqual(connected.json()["mailbox"]["id"], old_box)
+
+    def test_replacing_a_mailbox_removes_the_previous_person_account(self):
+        person_id = self.add_person()
+        self.invite_and_accept(person_id)
+        token = self.client.post(f"/api/people/{person_id}/invites").json()["token"]
+        self.user = "person_2"
+        with patch.object(people, "google_token", return_value="google-token"):
+            self.assertEqual(self.client.post(f"/api/invites/{token}/accept").status_code, 200)
+        self.user = "person_1"
+        self.assertEqual(self.client.get(f"/api/people/{person_id}/outbox").status_code, 403)
+        self.user = "person_2"
+        self.assertEqual(self.client.get(f"/api/people/{person_id}/outbox").status_code, 200)
+
+    def test_only_the_person_can_decide_a_person_review(self):
+        person_id = self.add_person()
+        self.invite_and_accept(person_id)
+        self.client.post(f"/api/people/{person_id}/settings/guardian", json={"enrolled": False})
+        sent = self.client.post(f"/api/people/{person_id}/intake/share", json={"text": DEBIT}).json()
+        self.assertEqual(self.client.post(f"/api/people/{person_id}/reviews/{sent['review_id']}/decision", json={"approved": True}).status_code, 403)
+        self.user = "person_1"
+        reviews = self.client.get(f"/api/people/{person_id}/person/reviews?status=PENDING").json()
+        self.assertEqual([item["review_id"] for item in reviews], [sent["review_id"]])
+        self.assertEqual(self.client.post(f"/api/people/{person_id}/reviews/{sent['review_id']}/decision", json={"approved": True}).status_code, 200)
+
+    def test_person_feedback_clears_the_answered_warning(self):
+        person_id = self.add_person()
+        self.invite_and_accept(person_id)
+        sent = self.client.post(f"/api/people/{person_id}/intake/email", json={"content": self.lure}).json()
+        self.assertEqual(self.client.post(f"/api/people/{person_id}/incidents/{sent['incident_id']}/feedback", json={"legitimate": True}).status_code, 403)
+        self.user = "person_1"
+        self.assertEqual(len(self.client.get(f"/api/people/{person_id}/outbox").json()), 1)
+        self.assertEqual(self.client.post(f"/api/people/{person_id}/incidents/{sent['incident_id']}/feedback", json={"legitimate": False}).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/people/{person_id}/outbox").json(), [])
+
     def test_the_whatsapp_gateway_names_the_person_it_serves(self):
         first = self.add_person("Thandi")
         second = self.add_person("Sipho")
         app.dependency_overrides.clear()                                  # the gateway has no session
-        body = "From=whatsapp%3A%2B27821234567&Body=" + DEBIT.replace(" ", "+")
-        self.assertEqual(self.client.post(f"/api/people/{first}/intake/whatsapp", content=body).status_code, 200)
-        self.assertEqual(self.client.post("/api/people/Pnobody/intake/whatsapp", content=body).status_code, 404)
+        fields = {"From": "whatsapp:+27821234567", "Body": DEBIT}
+        body = urlencode(fields)
+        url = f"http://testserver/api/people/{first}/intake/whatsapp"
+        with patch.dict(os.environ, {"TWILIO_AUTH_TOKEN": "test-token", "TWILIO_PUBLIC_ORIGIN": "http://testserver"}):
+            self.assertEqual(self.client.post(url, content=body).status_code, 403)
+            signature = RequestValidator("test-token").compute_signature(url, fields)
+            self.assertEqual(self.client.post(url, content=body, headers={"X-Twilio-Signature": signature}).status_code, 200)
+            missing = "http://testserver/api/people/Pnobody/intake/whatsapp"
+            signature = RequestValidator("test-token").compute_signature(missing, fields)
+            self.assertEqual(self.client.post(missing, content=body, headers={"X-Twilio-Signature": signature}).status_code, 404)
         self.assertEqual(len(pool.runtime_for(first).reports), 1)
         self.assertEqual(len(pool.runtime_for(second).reports), 0)
 
@@ -843,6 +901,17 @@ class ScannerTests(unittest.TestCase):
         everything = " ".join(str(report.payload) + str(report.metadata) for report in self.rt.reports.values())
         self.assertNotIn("Woolworths", everything)
         self.assertNotIn("482913", everything)
+
+    def test_safe_mail_joining_an_alert_is_removed_from_memory(self):
+        flagged = scanner.handle_mail(self.mailbox, self.lure)
+        self.assertEqual(flagged, "flagged")
+        incident_id = next(iter(self.rt.incidents))
+        safe = self.rt.process(RawInputReport(report_id="SAFE-JOIN", source="email", payload="Private safe message",
+                                               metadata={"incident_id": incident_id}))
+        self.assertEqual(safe.labels["threat"], "BENIGN")
+        scanner.forget(safe, self.rt)
+        self.assertNotIn("SAFE-JOIN", self.rt.reports)
+        self.assertNotIn("SAFE-JOIN", self.rt.incidents[incident_id].report_ids)
 
     def test_mail_goes_to_the_person_whose_mailbox_it_came_from(self):
         other = self.store.create_person("Sipho", "Uncle", "caregiver_1")

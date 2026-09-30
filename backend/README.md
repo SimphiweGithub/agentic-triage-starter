@@ -14,7 +14,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-The sibling `frontend/` folder is reserved for a separately built front end against `API.md`; interactive API documentation is at `http://127.0.0.1:8000/docs`. The page at `http://127.0.0.1:8000` is a plain developer console for watching the engine.
+The sibling `frontend/` folder contains the React product app built against `API.md`; interactive API documentation is at `http://127.0.0.1:8000/docs`. The page at `http://127.0.0.1:8000` is a plain developer console for watching the engine. See the frontend README for its setup.
 
 ```powershell
 .\.venv\Scripts\python.exe runner.py samples\kinguard.jsonl --output decisions.jsonl

@@ -166,9 +166,9 @@ What this does and does not show:
 
 ## `domain/tools.py`
 
-### The world (lines 22–37)
+### The world (lines 24–73)
 
-- **Lines 22–29 `World`** — one object holding all outside state:
+- **Lines 24–32 `World`** — one object holding all of one person's outside state:
   - `outbox` — warnings shown to the person.
   - `flagged` — senders and domains the mail filter blocks.
   - `disputes` — company registration number mapped to the dispute text.
@@ -178,33 +178,47 @@ What this does and does not show:
   - `debits` — for each merchant, the amounts seen so far.
   - `guardian` — whether a caregiver is enrolled. True unless
     `KINGUARD_GUARDIAN=0`, and changeable through the API.
-- **Line 33 `WORLD`** — the single shared instance.
-- **Lines 36–37 `reset_world`** — re-runs the initialiser, emptying everything.
+- **Line 35 `_default_world`** — the shared world, used when nobody asks for
+  their own: the plain console, offline runs and the older tests.
+- **Line 36 `_active_world`** — a `ContextVar` holding the world that is active
+  right now. A context variable belongs to the thread or task using it, so two
+  people being processed at the same moment each see their own.
+- **Lines 39–50 `_ActiveWorld`** — a stand-in that forwards every read and write
+  to the active world (46–47, 49–50). It is why the rules and tools below can
+  keep writing `WORLD.flagged` without being told whose world they are in.
+- **Line 53 `WORLD`** — the stand-in. It always means the world of the person
+  being worked on.
+- **Lines 56–58 `default_world`** — returns the shared world.
+- **Lines 61–68 `use_world`** — a context manager: inside the block `WORLD`
+  means the given world, and on leaving it goes back to what it was before
+  (64, 68), even if an error was raised.
+- **Lines 71–73 `reset_world`** — re-runs the initialiser of the active world,
+  emptying it.
 
-### Fixture data (lines 113–133)
+### Fixture data (lines 77–97)
 
 Stand-ins for registries we cannot query. All names and domains are fictional.
 
-- **Lines 113–116 `DOMAIN_REGISTERED`** — domain to registration date. Used when
+- **Lines 77–80 `DOMAIN_REGISTERED`** — domain to registration date. Used when
   the live lookup is off or has no answer.
-- **Lines 119–133 `COMPANIES`** — for each company: `name`, `reg_no`,
+- **Lines 83–97 `COMPANIES`** — for each company: `name`, `reg_no`,
   `registered` date, `creditor_code` (the short code its debit references
   start with), and `director` (the person registered as controlling it).
   `TechCare Support` and `PC Care Services` have different names and codes but
   the same director, `D-7781`. That shared director is what makes them one
   operator.
 
-### `DISPUTE_STEPS` (lines 128–133)
+### `DISPUTE_STEPS` (lines 92–97)
 
 Four plain steps for lodging a dispute. They are general on purpose: each
 bank's screens differ, and we have not verified any bank's exact menu.
 
-### Date helpers (lines 136–142)
+### Date helpers (lines 100–106)
 
 - **100–101 `_days_between`** — days from a registration date to the message.
 - **104–106 `_parse_date`** — text to a date-time, assuming UTC if no zone is given.
 
-### `_live_registration` (lines 147–161) — a real lookup
+### `_live_registration` (lines 111–125) — a real lookup
 
 Asks RDAP, the public service that holds domain registration records. Only
 the domain name is sent; nothing about the person or the message.
@@ -222,7 +236,7 @@ the domain name is sent; nothing about the person or the message.
 Known limit: some registries, including `.co.za`, do not answer RDAP. Those
 domains come back as unknown.
 
-### `domain_age` (lines 164–173)
+### `domain_age` (lines 128–137)
 
 - **129** — start with no date.
 - **130–131** — if `KINGUARD_LIVE_LOOKUPS=1`, try the real lookup.
@@ -232,14 +246,14 @@ domains come back as unknown.
 - **134–135** — still nothing: `ok=False`. The caller must cope with not knowing.
 - **136–137** — return the age in days, and say which source answered.
 
-### `_similarity` (lines 176–178)
+### `_similarity` (lines 140–142)
 
 How alike two names are, from 0 to 1. Both are lower-cased and stripped of
 spaces and punctuation first, then compared character by character with
 `SequenceMatcher`. `TECHCRE SUP` against `TechCare Support` scores 0.80;
 against `PC Care Services` it scores 0.42.
 
-### `merchant_registry` (lines 181–198)
+### `merchant_registry` (lines 145–162)
 
 - **146** — `words` are the words of the normalised name.
 - **147** — `matches` are companies whose name contains **all** those words
@@ -260,7 +274,7 @@ against `PC Care Services` it scores 0.42.
   information is worth trying.
 - **160–162** — exactly one: copy it, add `age_days`, return it.
 
-### `identify_operator` (lines 201–206)
+### `identify_operator` (lines 165–170)
 
 Returns the director behind a merchant, or an empty string.
 
@@ -268,13 +282,13 @@ Returns the director behind a merchant, or an empty string.
 - **168–169** — if that failed and there is a reference, retry with it.
 - **170** — return the `director` on success.
 
-### `mandate_history` (lines 209–213)
+### `mandate_history` (lines 173–177)
 
 - **174** — `previous` debit amounts from this merchant.
 - **175** — `ratio` of this amount to the last one, or `None`.
 - **176–177** — report whether it is the first debit and the ratio.
 
-### Action tools — they change the world (lines 218–234)
+### Action tools — they change the world (lines 182–234)
 
 Every action tool takes the same three arguments (`action`, `incident`,
 `report`) and returns a `ToolResult`.
