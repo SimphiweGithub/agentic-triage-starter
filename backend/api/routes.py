@@ -207,8 +207,9 @@ def move_state(incident_id: str, request: StateRequest):
 @router.get("/health", tags=["system"])
 def health():
     """Confirms the server is up and says which optional parts are switched on."""
-    return {"status": "ok", "guardian": WORLD.guardian, "mailbox": bool(os.getenv("IMAP_HOST")), "jev": os.getenv("ENABLE_JEV") == "1",
-            "gemini": os.getenv("ENABLE_GEMINI") == "1", "live_lookups": os.getenv("KINGUARD_LIVE_LOOKUPS") == "1"}
+    return {"status": "ok", "mailbox": bool(os.getenv("IMAP_HOST")), "jev": os.getenv("ENABLE_JEV") == "1",
+            "gemini": os.getenv("ENABLE_GEMINI") == "1", "live_lookups": os.getenv("KINGUARD_LIVE_LOOKUPS") == "1",
+            "gmail": bool(os.getenv("CLERK_SECRET_KEY")), "guardian": WORLD.guardian}
 
 
 @router.get("/state", tags=["system"])

@@ -2,6 +2,7 @@ import os
 
 os.environ["KINGUARD_SKIP_ENV_FILE"] = "1"  # tests never read real keys or switches from .env
 
+import base64
 from datetime import timedelta
 import json
 import tempfile
@@ -31,6 +32,7 @@ from domain.policy import ALLOWED_SERVICE_ACTIONS, FORBIDDEN_ACTIONS
 from domain.schemas import ActionProposal, Assessment, RawInputReport
 from evaluation import clustering, evaluate, load_jsonl
 from runner import run
+import api.gmail as gmail
 from api.mailbox import poll_once, start_polling
 from api.routes import take_in_email
 from main import app
@@ -540,6 +542,63 @@ class ApiContractTests(unittest.TestCase):
         self.assertNotIn("access-control-allow-origin", response.headers)
 
 
+class GmailRouteTests(unittest.TestCase):
+    """Clerk and Gmail are replaced by stand-ins; nothing leaves the machine."""
+
+    def setUp(self):
+        self.client = TestClient(app)
+        self.client.post("/api/reset")
+        self.lure = (ROOT / "samples" / "lure.eml").read_text(encoding="utf-8")
+
+    def tearDown(self):
+        app.dependency_overrides.clear()
+        self.client.post("/api/reset")
+
+    def fake_gmail(self, token, path, params=None):
+        self.assertEqual(token, "google-token")
+        if path == "/messages":
+            return {"messages": [{"id": "m1", "threadId": "t1"}]}
+        if params == {"format": "raw"}:
+            return {"raw": base64.urlsafe_b64encode(self.lure.encode("utf-8")).decode().rstrip("=")}
+        return {"id": "m1", "threadId": "t1", "snippet": "Your computer protection plan &amp; more",
+                "payload": {"headers": [{"name": "From", "value": "TechCare"}, {"name": "Subject", "value": "Final notice"}]}}
+
+    def test_without_clerk_configured_the_routes_say_so(self):
+        with patch.dict(os.environ, {"CLERK_SECRET_KEY": ""}):
+            self.assertEqual(self.client.get("/api/gmail/messages").status_code, 503)
+        self.assertFalse(self.client.get("/api/health").json()["gmail"])
+
+    def test_a_request_without_a_session_is_refused(self):
+        with patch.dict(os.environ, {"CLERK_SECRET_KEY": "sk_test_fake"}):
+            self.assertEqual(self.client.get("/api/gmail/messages").status_code, 401)
+
+    def test_signed_in_user_lists_and_takes_in_gmail(self):
+        app.dependency_overrides[gmail.signed_in_user] = lambda: "user_1"
+        with patch.object(gmail, "google_token", return_value="google-token"), patch.object(gmail, "gmail_get", self.fake_gmail):
+            listed = self.client.get("/api/gmail/messages").json()
+            self.assertEqual(listed, [{"id": "m1", "thread_id": "t1", "sender": "TechCare", "subject": "Final notice",
+                                       "date": "", "snippet": "Your computer protection plan & more"}])
+            decision = self.client.post("/api/gmail/messages/m1/intake").json()
+        self.assertEqual(self.client.get("/api/incidents").json()[0]["incident_id"], decision["incident_id"])
+
+    def test_google_token_needs_gmail_read_scope(self):
+        class FakeUsers:
+            def __init__(self, scopes): self.scopes = scopes
+            def get_o_auth_access_token(self, user_id, provider):
+                return [type("Token", (), {"token": "google-token", "scopes": self.scopes})()]
+
+        class FakeClerk:
+            def __init__(self, scopes): self.users = FakeUsers(scopes)
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+
+        with patch.dict(os.environ, {"CLERK_SECRET_KEY": "sk_test_fake"}):
+            with patch.object(gmail, "Clerk", lambda bearer_auth: FakeClerk([gmail.READ_SCOPE])):
+                self.assertEqual(gmail.google_token("user_1"), "google-token")
+            with patch.object(gmail, "Clerk", lambda bearer_auth: FakeClerk(["openid", "email"])):
+                with self.assertRaises(gmail.HTTPException) as refused:
+                    gmail.google_token("user_1")
+                self.assertEqual(refused.exception.status_code, 403)
 MANDATE = "Nedbank: Mandate registered for R189.00 by TECHCARE SUPPORT. Reply within 24h to reject."
 DEBIT = "YourBank: Debit order of R349.00 to TECHCARE ref TCS8841 from acc 1234567890 on 02 Oct."
 

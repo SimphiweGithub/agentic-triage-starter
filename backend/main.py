@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from api.gmail import router as gmail_router
 from api.mailbox import start_polling
 from api.routes import router, take_in_email
 
@@ -17,9 +18,10 @@ app = FastAPI(title="KinGuard API", version="0.2.0",
 # lists its own address in CORS_ORIGINS, for example http://localhost:5173 (comma separated).
 origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()]
 if origins:
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
+    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"])
 
 app.include_router(router, prefix="/api")
+app.include_router(gmail_router, prefix="/api")  # needs CLERK_SECRET_KEY; answers 503 without it
 start_polling(take_in_email)  # live mailbox; does nothing unless IMAP_HOST is set
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
