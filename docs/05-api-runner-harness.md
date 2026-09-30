@@ -356,14 +356,16 @@ on this machine.
 - **Line 19 `NOT_A_CONTACT`** — the values the export uses when the sender is
   not in the phone's contacts.
 - **Line 20 `MONTHS`** — month names, used only to spot repeats.
+- **Line 21 `TOKEN`** — a run of letters, digits and joiners such as `#`,
+  `/` and `-`: the shape of an order number or a student number.
 
-### `looks_personal` (lines 23–34)
+### `looks_personal` (lines 24–35)
 
 True when a sender looks like a person rather than a business.
 
-- **31–32** — a sender with letters in it (`Capitec`, `MTN136`) is a business.
-- **33** — otherwise keep only the digits.
-- **34** — 7 to 12 digits looks like a phone number. Shorter is a short code;
+- **32–33** — a sender with letters in it (`Capitec`, `MTN136`) is a business.
+- **34** — otherwise keep only the digits.
+- **35** — 7 to 12 digits looks like a phone number. Shorter is a short code;
   longer is a bulk-messaging number.
 
 Why this exists: on the first real export, 4,294 of 4,299 texts had no
@@ -374,32 +376,52 @@ does not depend on the export knowing who is a contact.
 The cost: a scam from an ordinary phone number, such as "Hi mom, new
 number", is left out too. Those have to be added to the file by hand.
 
-### `collect` (lines 37–59)
+### `mask_for_labelling` (lines 38–54)
 
-- **39** — `by_sender`: each sender's kept messages.
-- **40** — `seen`: the shapes of messages already kept.
-- **41** — walk through every `<sms>` entry in the file. Picture messages are
+Stronger masking than the engine uses, because people will read this file.
+
+- **44** — every email address becomes `[email withheld]`.
+- **45–46** — every word passed in with `--mask` (the owner's names) becomes
+  `[name]`, whole words only, ignoring case.
+- **48–52 `mask`** — for each token: if it has fewer than five digits, or it
+  is a rand amount, or it is a phone number, keep it; otherwise replace it
+  with `[id withheld]`. Order numbers, student numbers and long references
+  go; amounts and phone numbers stay, because the gate reads them.
+- **54** — apply `mask` to every token in the text.
+
+Why this exists: the first real file still showed order numbers and a
+student number, which the engine's masking of 9-digit-plus runs does not
+catch.
+
+### `collect` (lines 57–79)
+
+- **59** — `by_sender`: each sender's kept messages.
+- **60** — `seen`: the shapes of messages already kept.
+- **61** — walk through every `<sms>` entry in the file. Picture messages are
   a different tag and are skipped.
-- **42** — `text`: the body with its whitespace tidied.
-- **43** — `sender`: the address the message came from.
-- **44–45** — skip anything sent by the phone's owner, and anything the
+- **62** — `text`: the body with its whitespace tidied.
+- **63** — `sender`: the address the message came from.
+- **64–65** — skip anything sent by the phone's owner, and anything the
   export marks as from a saved contact.
-- **46–47** — skip anything from a sender that looks like a person.
-- **48–49** — skip empty messages and one-time codes.
-- **50** — mask account and card numbers.
-- **51–54** — `shape` is the message with every number turned into `0` and
+- **66–67** — skip anything from a sender that looks like a person.
+- **68–69** — skip empty messages, one-time codes, and any message that hands
+  over a password or recovery code (see `is_one_time_code` in
+  `02-reading-messages.md`).
+- **70** — mask account numbers the engine's way, then mask for labelling.
+- **71–74** — `shape` is the message with every number turned into `0` and
   every month into `month`. Two notices that differ only in amount or date
   have the same shape, so only the first is kept.
-- **55** — file the message under its sender.
-- **56–59** — take at most `per_sender` messages from each sender, shuffle,
+- **75** — file the message under its sender.
+- **76–79** — take at most `per_sender` messages from each sender, shuffle,
   and cut to `limit`, so the file stays short enough to label by hand. The
   fixed `seed` makes the sample repeatable.
 
-### `main` (lines 62–72)
+### `main` (lines 82–93)
 
-Reads the export path and the options, calls `collect`, and writes each
-message as `?<TAB>text<TAB>sender`. A person then replaces each `?` with
-`scam` or `benign`. `calibrate.py` refuses the file until every line is labelled.
+Reads the export path and the options, including `--mask` (line 88), calls
+`collect`, and writes each message as `?<TAB>text<TAB>sender`. A person then
+replaces each `?` with `scam` or `benign`. `calibrate.py` refuses the file
+until every line is labelled.
 
 The labels must come from someone who did not write the gate's rules.
 

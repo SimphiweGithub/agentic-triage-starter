@@ -18,7 +18,7 @@ from core.ingest import kept, read_records, safe_parse
 from core.runtime import TriageRuntime
 from domain.enums import ActionOutcome, ActionType, IncidentState, Relationship, ServiceDomain, SeverityLevel, ThreatDomain
 from calibrate import load_labelled, sweep
-from collect_sms import collect, looks_personal
+from collect_sms import collect, looks_personal, mask_for_labelling
 from core.jev import system_one
 from domain.extract import extract_signals, redact
 from domain.gate import gate
@@ -699,6 +699,19 @@ class CollectionTests(unittest.TestCase):
             self.assertFalse(looks_personal(business))
         for person in ("+27825550199", "0825550199", "+37061910800"):
             self.assertTrue(looks_personal(person))
+
+    def test_messages_that_hand_over_a_secret_are_withheld(self):
+        for secret in ("Your password is Kx81!pq", "Use recovery code 4821-9921 to sign in", "Your login details: user ST10451674"):
+            self.assertIsNotNone(withhold({"payload": secret}))
+        self.assertIsNone(withhold({"payload": "Urgent: confirm your password at http://bank-secure.example"}))
+
+    def test_identifiers_and_names_are_masked_for_labelling(self):
+        masked = mask_for_labelling("Hi Simphiwe, order #OD-4471923 for ST10451674 (st10451674@myemeris.example) R1500.00, call 0105550142",
+                                    ["Simphiwe"])
+        for leaked in ("Simphiwe", "4471923", "10451674", "@myemeris"):
+            self.assertNotIn(leaked, masked)
+        self.assertIn("R1500.00", masked)
+        self.assertIn("0105550142", masked)
 
     def test_unlabelled_lines_are_refused_not_counted_as_benign(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -3,6 +3,10 @@ import re
 from typing import Any
 
 OTP_PATTERN = re.compile(r"\b(otp|one[- ]time (?:pin|password|passcode)|verification code|security code|login code)\b", re.I)
+# A message that hands over a secret: "your password is ...", "recovery code", "login details". A scam that asks
+# the reader to "confirm your password" does not match, so it is still analysed.
+SECRET_PATTERN = re.compile(r"\b((password|passcode|pin|username|user name|code)\s*(is|:|=)|(recovery|reset|backup|access|activation) codes?"
+                            r"|temporary password|login details|log ?in details)\b", re.I)
 ACCOUNT_PATTERN = re.compile(r"(?<![+\d])(?!0\d{9}\b)\d{9,19}\b")
 AMOUNT_PATTERN = re.compile(r"\bR\s?(\d{1,3}(?:[ ,]\d{3})+|\d+)(\.\d{2})?")
 URL_PATTERN = re.compile(r"(?:https?://|www\.)([a-z0-9.-]+\.[a-z]{2,})", re.I)
@@ -15,8 +19,8 @@ MERCHANT_PATTERN = re.compile(r"\b(?:to|from|by|at)\s+([A-Z][A-Za-z0-9&' -]{2,40
 
 
 def is_one_time_code(text: str) -> bool:
-    """Messages carrying login or payment codes are never stored or sent to a model."""
-    return bool(OTP_PATTERN.search(text or ""))
+    """Messages carrying login or payment codes, passwords or recovery codes are never stored or sent to a model."""
+    return bool(OTP_PATTERN.search(text or "") or SECRET_PATTERN.search(text or ""))
 
 
 def redact(text: str) -> str:
