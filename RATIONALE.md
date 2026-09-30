@@ -202,6 +202,27 @@ these, so it could only show false alarms. The first version added two on the
 held-out set; after weakening one rule and removing one word, none. How many
 real scams they catch is not measured.
 
+**A second dataset, and why we do not quote it as a score.** We ran the gate,
+untouched, on ExAIS: 4,195 received SMS from 20 people at a Nigerian
+university, labelled spam or not by its authors.
+
+| Gate | Flagged spam | Flagged non-spam |
+|---|---|---|
+| Rules only, threshold 0.30 | 479 of 2,167 (22%) | 97 of 2,028 |
+| Rules plus Jev, threshold 0.30 | 1,007 of 2,167 (46%) | 437 of 2,028 |
+
+The numbers are low because "spam" in this dataset means unwanted operator
+marketing: airtime promotions, daily quotes, news digests. Very little of it
+is fraud, and some promotions are labelled as not spam. It measures a
+different thing from what we detect. We did not tune anything to it.
+
+It still taught us three things. Our premium-rate rule only knows rand and
+pence, so it missed "N50 weekly" subscription offers until Jev caught them:
+the rules are tied to a country. With Jev on, promotional messages trigger
+far more flags, which in real use would crowd the caregiver's queue. And a
+public dataset is only as useful as its labels; the evidence we still need is
+South African messages labelled as scam or not by someone outside the team.
+
 **Still to measure**
 
 - The gate on South African messages labelled by someone outside the team.
