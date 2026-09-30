@@ -19,7 +19,7 @@ Never add a `Co-Authored-By: Codex ...` trailer or any other self-attribution to
 
 ## Working rules
 
-- Every backend file is explained line by line in `docs/01` to `docs/05`. When code changes, update the matching walkthrough and its line numbers.
+- Every backend file is explained line by line in `backend/docs/01` to `backend/docs/05`. When code changes, update the matching walkthrough and its line numbers.
 - Measure before tuning. Use `calibrate.py` with a held-out split and `evaluation.py --truth`; record results in `RATIONALE.md`.
 - Tests never call the real model APIs. They set `KINGUARD_SKIP_ENV_FILE=1`.
-- Keys live only in `.env`, which git ignores.
+- Keys live only in `backend/.env`, which git ignores.

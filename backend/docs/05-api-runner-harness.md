@@ -368,7 +368,7 @@ still carries the generic prompt and has not been adapted to KinGuard.
 Runs once, the first time anything in `core/` is imported, which every entry
 point does.
 
-- **Line 5 `ENV_FILE`** — the path `agentic-engine/.env`.
+- **Line 5 `ENV_FILE`** — the path `backend/.env`.
 - **`load_env_file` (8–15)**:
   - **10–11** — do nothing if `KINGUARD_SKIP_ENV_FILE=1` (the tests set this,
     so they never use real keys) or if the file does not exist.
