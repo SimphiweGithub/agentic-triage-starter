@@ -1,5 +1,6 @@
 """Domain-neutral, in-memory orchestration and audit trail."""
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from itertools import count
 import os
 from threading import RLock
@@ -11,14 +12,24 @@ from domain.enums import ActionOutcome, IncidentState, Relationship, SeverityLev
 from domain.logic import assess, review_audience, risk_persists
 from domain.policy import ACTION_IDENTITY, REPEATABLE_ACTIONS, STATE_AFTER_APPROVED, SUPERSEDING_ACTIONS
 from domain.schemas import ActionRecord, Assessment, DecisionRecord, IncidentRecord, RawInputReport, ReviewItem
-from domain.tools import reset_world
+from domain.tools import World, default_world, reset_world, use_world
 
 ENGAGED = (ActionOutcome.PROPOSED, ActionOutcome.EXECUTED, ActionOutcome.HELD_FOR_REVIEW)
 
 
+def in_own_world(method):
+    """Run a method under the runtime's lock with its own world active, so the domain code's `WORLD` is this person's."""
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self.lock, use_world(self.world):
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class TriageRuntime:
-    def __init__(self, correlator: Correlator | None = None):
+    def __init__(self, correlator: Correlator | None = None, world: World | None = None):
         self.lock = RLock()
+        self.world = world if world is not None else default_world()  # one per person on the server; shared when none is given
         if not os.getenv("GEMINI_API_KEY") and (os.getenv("ENABLE_LLM_RELATION") == "1" or os.getenv("ENABLE_LLM_ASSESS") == "1"):
             raise RuntimeError("ENABLE_LLM_RELATION and ENABLE_LLM_ASSESS require GEMINI_API_KEY")
         if correlator is None and os.getenv("ENABLE_LLM_RELATION") == "1":
@@ -29,6 +40,7 @@ class TriageRuntime:
         self.now = lambda: datetime.now(timezone.utc)  # replaceable, so tests can move time forward
         self.reset()
 
+    @in_own_world
     def reset(self) -> None:
         with self.lock:
             self.reports: dict[str, RawInputReport] = {}
@@ -39,7 +51,13 @@ class TriageRuntime:
             self.position = 0
             self._incident_ids = count(1)
             self._review_ids = count(1)
+            self._report_numbers = count(1)
             reset_world()
+
+    def next_report_number(self) -> int:
+        """A number that is never reused, even after a report is forgotten, so generated report ids cannot collide."""
+        with self.lock:
+            return next(self._report_numbers)
 
     def _new_incident(self, report: RawInputReport) -> IncidentRecord:
         incident = IncidentRecord(incident_id=f"I{next(self._incident_ids):04d}", status=IncidentState.NEW,
@@ -72,6 +90,7 @@ class TriageRuntime:
                                              reason=reason, proposed_action=action, audience=review_audience(), not_before=not_before)
         return review_id
 
+    @in_own_world
     def process(self, report: RawInputReport) -> DecisionRecord:
         with self.lock:
             if report.report_id in self.decisions:
@@ -174,6 +193,7 @@ class TriageRuntime:
             self.decisions[report.report_id] = decision
             return decision
 
+    @in_own_world
     def process_safely(self, report: RawInputReport, parse_error: str | None = None) -> DecisionRecord:
         """Batch entry point: one decision per input row, whatever happens."""
         if parse_error:
@@ -188,6 +208,7 @@ class TriageRuntime:
             self.reset()
             self.queue = list(items)
 
+    @in_own_world
     def step(self, steps: int = 1) -> list[DecisionRecord]:
         with self.lock:
             batch = self.queue[self.position:self.position + max(steps, 0)]
@@ -195,6 +216,7 @@ class TriageRuntime:
             self.position += len(batch)
             return decisions
 
+    @in_own_world
     def decide_review(self, review_id: str, approved: bool) -> ReviewItem:
         """Record the human decision. An approved action now runs; a rejected one never does."""
         with self.lock:
@@ -220,6 +242,7 @@ class TriageRuntime:
                     incident.status = transition_state(incident.status, target)
             return item
 
+    @in_own_world
     def move_state(self, incident_id: str, target: IncidentState) -> IncidentRecord:
         with self.lock:
             incident = self.incidents[incident_id]

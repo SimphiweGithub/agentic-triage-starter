@@ -1,9 +1,11 @@
 import os
 
 os.environ["KINGUARD_SKIP_ENV_FILE"] = "1"  # tests never read real keys or switches from .env
+os.environ["KINGUARD_DB"] = ":memory:"      # and never touch the real database
+os.environ["KINGUARD_DEV_OPEN"] = "1"      # the older tests call routes without a session; AccessTests turn this off
 
 import base64
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import tempfile
 import unittest
@@ -27,14 +29,16 @@ from domain.investigate import investigate
 from domain.language import write_person_message
 from domain.intake import email_to_row
 from domain.logic import parse_record, parse_timestamp, withhold
-from domain.tools import WORLD, domain_age, identify_operator, merchant_registry
+from domain.tools import WORLD, World, default_world, domain_age, identify_operator, merchant_registry
 from domain.policy import ALLOWED_SERVICE_ACTIONS, FORBIDDEN_ACTIONS
 from domain.schemas import ActionProposal, Assessment, RawInputReport
 from evaluation import clustering, evaluate, load_jsonl
 from runner import run
 import api.gmail as gmail
+from api import auth, people, pool, scanner
 from api.mailbox import poll_once, start_polling
 from api.routes import take_in_email
+from api.store import Store, get_store
 from main import app
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -531,8 +535,9 @@ class ApiContractTests(unittest.TestCase):
 
     def test_documentation_lists_every_route_and_bad_input_is_rejected(self):
         paths = self.client.get("/openapi.json").json()["paths"]
-        for path in ("/api/intake/email", "/api/intake/share", "/api/outbox", "/api/incidents", "/api/reviews",
-                     "/api/reviews/{review_id}/decision", "/api/incidents/{incident_id}/feedback", "/api/state"):
+        for path in ("/api/people/{person_id}/intake/email", "/api/people/{person_id}/intake/share", "/api/people/{person_id}/outbox",
+                     "/api/people/{person_id}/incidents", "/api/people/{person_id}/reviews", "/api/people/{person_id}/reviews/{review_id}/decision",
+                     "/api/people/{person_id}/incidents/{incident_id}/feedback", "/api/people/{person_id}/state", "/api/people/summary", "/api/me"):
             self.assertIn(path, paths)
         self.assertEqual(self.client.post("/api/intake/share", json={"text": ""}).status_code, 422)
         self.assertEqual(self.client.post("/api/incidents/I9999/feedback", json={"legitimate": True}).status_code, 404)
@@ -542,45 +547,226 @@ class ApiContractTests(unittest.TestCase):
         self.assertNotIn("access-control-allow-origin", response.headers)
 
 
-class GmailRouteTests(unittest.TestCase):
-    """Clerk and Gmail are replaced by stand-ins; nothing leaves the machine."""
+SAFE_EMAIL = ("From: Woolworths <noreply@woolworths.co.za>\nTo: person@example.com\nSubject: Your receipt\nMessage-ID: <a1@x>\n"
+              "Date: Mon, 02 Nov 2026 10:05:00 +0000\n\nThank you for shopping with us. Your receipt total is R212.40.")
+CODE_EMAIL = ("From: YourBank <alerts@yourbank.example>\nSubject: Code\nMessage-ID: <a2@x>\n"
+              "Date: Mon, 02 Nov 2026 10:05:00 +0000\n\nYour one-time PIN is 482913. Do not share it.")
+
+
+class AccessTests(unittest.TestCase):
+    """Who may call what, and that one person's data never reaches another. Clerk is replaced by an override naming the caller."""
 
     def setUp(self):
+        self.env = patch.dict(os.environ, {"KINGUARD_DEV_OPEN": "0", "CLERK_SECRET_KEY": "sk_test_fake"})
+        self.env.start()
+        get_store().reset()
+        pool.forget_everyone()
         self.client = TestClient(app)
-        self.client.post("/api/reset")
+        self.user = "caregiver_1"
+        app.dependency_overrides[auth.who] = lambda: self.user
+        self.sent_roles = []
+        self.role_patch = patch.object(people, "set_clerk_role", lambda user_id, role: self.sent_roles.append((user_id, role)))
+        self.role_patch.start()
         self.lure = (ROOT / "samples" / "lure.eml").read_text(encoding="utf-8")
 
     def tearDown(self):
+        self.role_patch.stop()
         app.dependency_overrides.clear()
-        self.client.post("/api/reset")
+        self.env.stop()
+        get_store().reset()
+        pool.forget_everyone()
 
-    def fake_gmail(self, token, path, params=None):
-        self.assertEqual(token, "google-token")
-        if path == "/messages":
-            return {"messages": [{"id": "m1", "threadId": "t1"}]}
-        if params == {"format": "raw"}:
-            return {"raw": base64.urlsafe_b64encode(self.lure.encode("utf-8")).decode().rstrip("=")}
-        return {"id": "m1", "threadId": "t1", "snippet": "Your computer protection plan &amp; more",
-                "payload": {"headers": [{"name": "From", "value": "TechCare"}, {"name": "Subject", "value": "Final notice"}]}}
+    def add_person(self, name="Thandi", relation="Gran", as_user=None) -> str:
+        if as_user:
+            self.user = as_user
+        created = self.client.post("/api/people", json={"name": name, "relation": relation})
+        self.assertEqual(created.status_code, 201)
+        return created.json()["people"][-1]["id"]
 
-    def test_without_clerk_configured_the_routes_say_so(self):
+    def invite_and_accept(self, person_id: str, as_user: str = "person_1") -> str:
+        token = self.client.post(f"/api/people/{person_id}/invites").json()["token"]
+        caregiver = self.user
+        self.user = as_user
+        with patch.object(people, "google_token", return_value="google-token"):
+            self.assertEqual(self.client.post(f"/api/invites/{token}/accept").status_code, 200)
+        self.user = caregiver
+        return token
+
+    def test_health_is_open_but_every_other_route_needs_a_session(self):
+        app.dependency_overrides.clear()
+        self.assertEqual(self.client.get("/api/health").status_code, 200)
+        self.assertEqual(self.client.get("/api/people/Pabc/state").status_code, 401)
         with patch.dict(os.environ, {"CLERK_SECRET_KEY": ""}):
-            self.assertEqual(self.client.get("/api/gmail/messages").status_code, 503)
-        self.assertFalse(self.client.get("/api/health").json()["gmail"])
+            self.assertEqual(self.client.get("/api/people/Pabc/state").status_code, 503)
 
-    def test_a_request_without_a_session_is_refused(self):
-        with patch.dict(os.environ, {"CLERK_SECRET_KEY": "sk_test_fake"}):
-            self.assertEqual(self.client.get("/api/gmail/messages").status_code, 401)
+    def test_routes_must_name_the_person_outside_development_mode(self):
+        self.add_person()
+        self.assertEqual(self.client.get("/api/state").status_code, 404)        # the unprefixed routes are for the plain console only
 
-    def test_signed_in_user_lists_and_takes_in_gmail(self):
-        app.dependency_overrides[gmail.signed_in_user] = lambda: "user_1"
-        with patch.object(gmail, "google_token", return_value="google-token"), patch.object(gmail, "gmail_get", self.fake_gmail):
-            listed = self.client.get("/api/gmail/messages").json()
-            self.assertEqual(listed, [{"id": "m1", "thread_id": "t1", "sender": "TechCare", "subject": "Final notice",
-                                       "date": "", "snippet": "Your computer protection plan & more"}])
-            decision = self.client.post("/api/gmail/messages/m1/intake").json()
-        self.assertEqual(self.client.get("/api/incidents").json()[0]["incident_id"], decision["incident_id"])
+    def test_someone_who_is_not_linked_sees_nothing_but_can_start_looking_after_someone(self):
+        self.assertEqual(self.client.get("/api/people/Pabc/state").status_code, 403)
+        me = self.client.get("/api/me").json()
+        self.assertEqual((me["role"], me["people"], me["can_add_person"]), (None, [], True))
 
+    def test_a_caregiver_can_look_after_several_people(self):
+        first = self.add_person("Thandi", "Gran")
+        second = self.add_person("Sipho", "Uncle")
+        me = self.client.get("/api/me").json()
+        self.assertEqual([item["name"] for item in me["people"]], ["Thandi", "Sipho"])
+        self.assertEqual(me["role"], "caregiver")
+        self.assertEqual(self.sent_roles, [("caregiver_1", "caregiver")])      # the Clerk role is set once, not per person
+        for person_id in (first, second):
+            self.assertEqual(self.client.get(f"/api/people/{person_id}/state").status_code, 200)
+
+    def test_one_caregivers_people_are_invisible_to_another_caregiver(self):
+        mine = self.add_person("Thandi", as_user="caregiver_1")
+        theirs = self.add_person("Sipho", as_user="caregiver_2")
+        self.user = "caregiver_1"
+        self.assertEqual(self.client.get(f"/api/people/{theirs}/state").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/people/{theirs}/mailboxes").status_code, 404)
+        self.assertEqual(self.client.post(f"/api/people/{theirs}/invites").status_code, 404)
+        self.assertEqual(self.client.post(f"/api/people/{theirs}/intake/share", json={"text": "hello"}).status_code, 404)
+        self.assertEqual([item["name"] for item in self.client.get("/api/people/summary").json()], ["Thandi"])
+        self.user = "caregiver_2"
+        self.assertEqual(self.client.get(f"/api/people/{mine}/state").status_code, 404)
+
+    def test_each_person_has_their_own_incidents_reviews_and_world(self):
+        first = self.add_person("Thandi")
+        second = self.add_person("Sipho")
+        self.assertEqual(self.client.post(f"/api/people/{first}/intake/email", json={"content": self.lure}).status_code, 200)
+        self.client.post(f"/api/people/{first}/intake/share", json={"text": DEBIT, "sender": "YourBank"})
+        one = self.client.get(f"/api/people/{first}/state").json()
+        two = self.client.get(f"/api/people/{second}/state").json()
+        self.assertGreaterEqual(len(one["incidents"]), 1)
+        self.assertTrue(one["world"]["flagged"])
+        self.assertTrue([item for item in one["reviews"] if item["status"] == "PENDING"])
+        self.assertEqual((two["incidents"], two["reviews"], two["reports"]), ([], [], []))
+        self.assertEqual((two["world"]["flagged"], two["world"]["outbox"], two["world"]["disputes"]), ([], [], {}))
+        summary = {item["id"]: item for item in self.client.get("/api/people/summary").json()}
+        self.assertGreaterEqual(summary[first]["needs"], 1)
+        self.assertEqual(summary[second]["needs"], 0)
+
+    def test_a_setting_or_a_reset_for_one_person_leaves_the_other_alone(self):
+        first = self.add_person("Thandi")
+        second = self.add_person("Sipho")
+        self.client.post(f"/api/people/{first}/intake/email", json={"content": self.lure})
+        self.client.post(f"/api/people/{second}/intake/email", json={"content": self.lure})
+        self.client.post(f"/api/people/{first}/settings/guardian", json={"enrolled": False})
+        self.assertFalse(self.client.get(f"/api/people/{first}/state").json()["world"]["guardian"])
+        self.assertTrue(self.client.get(f"/api/people/{second}/state").json()["world"]["guardian"])
+        self.client.post(f"/api/people/{first}/reset")
+        self.assertEqual(self.client.get(f"/api/people/{first}/state").json()["incidents"], [])
+        self.assertEqual(len(self.client.get(f"/api/people/{second}/state").json()["incidents"]), 1)
+
+    def test_the_person_connects_through_a_single_use_invite(self):
+        person_id = self.add_person()
+        token = self.client.post(f"/api/people/{person_id}/invites").json()["token"]
+        app.dependency_overrides.clear()
+        looked = self.client.get(f"/api/invites/{token}").json()        # no sign-in needed to look
+        self.assertEqual((looked["valid"], looked["person_name"]), (True, "Thandi"))
+        app.dependency_overrides[auth.who] = lambda: self.user
+        self.user = "person_1"
+        with patch.object(people, "google_token", return_value="google-token"):
+            accepted = self.client.post(f"/api/invites/{token}/accept").json()
+            again = self.client.post(f"/api/invites/{token}/accept")
+        self.assertEqual((accepted["role"], accepted["mailbox"]["status"]), ("person", "connected"))
+        self.assertEqual(self.sent_roles[-1], ("person_1", "person"))
+        self.assertEqual(again.status_code, 410)
+        self.assertEqual(self.client.get(f"/api/people/{person_id}/state").status_code, 403)   # the person is not the caregiver
+        self.assertEqual(self.client.get(f"/api/people/{person_id}/outbox").status_code, 200)   # but may use the few routes meant for them
+
+    def test_the_person_can_reach_only_their_own_routes(self):
+        mine = self.add_person("Thandi")
+        other = self.add_person("Sipho")
+        self.invite_and_accept(mine)
+        self.user = "person_1"
+        self.assertEqual(self.client.get(f"/api/people/{mine}/outbox").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/people/{other}/outbox").status_code, 404)
+        self.assertEqual(self.client.get("/api/people/summary").status_code, 403)
+        self.assertEqual(self.client.post("/api/people", json={"name": "X"}).status_code, 409)   # a protected person cannot look after anyone
+
+    def test_an_invite_the_person_cannot_use_leaves_nothing_behind(self):
+        person_id = self.add_person()
+        token = self.client.post(f"/api/people/{person_id}/invites").json()["token"]
+        self.user = "person_1"
+        refused = people.HTTPException(403, "Google is connected without Gmail read access. Sign in with Google again to grant it.")
+        with patch.object(people, "google_token", side_effect=refused):
+            self.assertEqual(self.client.post(f"/api/invites/{token}/accept").status_code, 403)
+        self.assertEqual(get_store().mailboxes(person_id), [])
+        self.assertEqual(get_store().links_of("person_1"), [])
+        self.assertIsNone(people.invite_problem(get_store().invite(token)))     # still usable once access is granted
+
+    def test_cancelled_and_expired_invites_are_refused_in_plain_words(self):
+        person_id = self.add_person()
+        cancelled = self.client.post(f"/api/people/{person_id}/invites").json()["token"]
+        self.assertEqual(self.client.post(f"/api/people/{person_id}/invites/{cancelled}/cancel").status_code, 200)
+        expired = self.client.post(f"/api/people/{person_id}/invites").json()["token"]
+        get_store().db.execute("UPDATE invites SET expires_at = ? WHERE token = ?", ("2020-01-01T00:00:00+00:00", expired))
+        self.user = "person_1"
+        for token, words in ((cancelled, "cancelled"), (expired, "expired"), ("nonsense", "not valid")):
+            refused = self.client.post(f"/api/invites/{token}/accept")
+            self.assertEqual(refused.status_code, 410)
+            self.assertIn(words, refused.json()["detail"])
+        self.user = "caregiver_1"
+        self.assertEqual(self.client.get(f"/api/people/{person_id}/invites").json(), [])
+
+    def test_the_caregiver_cannot_accept_their_own_invite(self):
+        person_id = self.add_person()
+        token = self.client.post(f"/api/people/{person_id}/invites").json()["token"]
+        with patch.object(people, "google_token", return_value="google-token"):
+            self.assertEqual(self.client.post(f"/api/invites/{token}/accept").status_code, 409)
+
+    def test_the_person_can_disconnect_and_the_caregiver_can_see_it(self):
+        person_id = self.add_person()
+        self.invite_and_accept(person_id)
+        revoked = []
+        self.user = "caregiver_1"
+        self.assertEqual(self.client.post("/api/me/disconnect").status_code, 403)
+        self.user = "person_1"
+        with patch.object(people, "google_token", return_value="google-token"), patch.object(people, "revoke", revoked.append):
+            self.assertEqual(self.client.post("/api/me/disconnect").json()["mailbox"]["status"], "disconnected")
+        self.assertEqual(revoked, ["google-token"])
+        self.user = "caregiver_1"
+        listed = self.client.get(f"/api/people/{person_id}/mailboxes").json()
+        self.assertEqual([item["status"] for item in listed], ["disconnected"])
+        self.assertTrue({"token", "owner_user_id", "payload"}.isdisjoint(listed[0]))   # state only, never a token or a message
+        self.assertEqual(self.client.get("/api/people/summary").json()[0]["problems"], 1)
+
+    def test_the_whatsapp_gateway_names_the_person_it_serves(self):
+        first = self.add_person("Thandi")
+        second = self.add_person("Sipho")
+        app.dependency_overrides.clear()                                  # the gateway has no session
+        body = "From=whatsapp%3A%2B27821234567&Body=" + DEBIT.replace(" ", "+")
+        self.assertEqual(self.client.post(f"/api/people/{first}/intake/whatsapp", content=body).status_code, 200)
+        self.assertEqual(self.client.post("/api/people/Pnobody/intake/whatsapp", content=body).status_code, 404)
+        self.assertEqual(len(pool.runtime_for(first).reports), 1)
+        self.assertEqual(len(pool.runtime_for(second).reports), 0)
+
+
+class WorldIsolationTests(unittest.TestCase):
+    def test_a_runtime_with_its_own_world_never_touches_the_shared_one_or_another(self):
+        lure = take_in_email  # the same email, processed for two people
+        raw = (ROOT / "samples" / "lure.eml").read_text(encoding="utf-8")
+        WORLD.__init__()
+        first, second = TriageRuntime(world=World()), TriageRuntime(world=World())
+        lure(raw, first)
+        self.assertTrue(first.world.flagged)
+        self.assertEqual((second.world.flagged, second.world.outbox), (set(), []))
+        self.assertEqual(default_world().flagged, set())
+        self.assertEqual(WORLD.flagged, set())                              # outside any runtime, WORLD is the shared default
+
+    def test_two_worlds_can_be_used_from_different_threads_at_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        raw = (ROOT / "samples" / "lure.eml").read_text(encoding="utf-8")
+        runtimes = [TriageRuntime(world=World()) for _ in range(6)]
+        with ThreadPoolExecutor(max_workers=6) as pool_:
+            list(pool_.map(lambda rt: take_in_email(raw, rt), runtimes))
+        for rt in runtimes:
+            self.assertEqual(len(rt.incidents), 1)
+            self.assertEqual(len(rt.world.outbox), 1)
+
+
+class GoogleTokenTests(unittest.TestCase):
     def test_google_token_needs_gmail_read_scope(self):
         class FakeUsers:
             def __init__(self, scopes): self.scopes = scopes
@@ -599,6 +785,148 @@ class GmailRouteTests(unittest.TestCase):
                 with self.assertRaises(gmail.HTTPException) as refused:
                     gmail.google_token("user_1")
                 self.assertEqual(refused.exception.status_code, 403)
+
+    def test_the_caregivers_own_gmail_is_no_longer_readable_through_the_api(self):
+        paths = set(app.openapi()["paths"])
+        self.assertFalse([path for path in paths if path.startswith("/api/gmail")])
+
+
+class ScannerTests(unittest.TestCase):
+    """The scanner with Clerk and Gmail replaced by stand-ins."""
+
+    def setUp(self):
+        self.store = Store(":memory:")
+        pool.forget_everyone()
+        self.person = self.store.create_person("Thandi", "Gran", "caregiver_1")
+        invite = self.store.create_invite(self.person["id"], "caregiver_1")
+        self.mailbox = self.store.accept_invite(invite["token"], "person_1")
+        self.rt = pool.runtime_for(self.person["id"])
+        self.lure = (ROOT / "samples" / "lure.eml").read_text(encoding="utf-8")
+        self.inbox = {"a": self.lure, "b": SAFE_EMAIL, "c": CODE_EMAIL}
+        self.queries = []
+
+    def tearDown(self):
+        pool.forget_everyone()
+        self.store.close()
+
+    def scan(self, inbox=None, failure=None):
+        inbox = self.inbox if inbox is None else inbox
+
+        def ids(token, query):
+            self.queries.append(query)
+            return iter(list(inbox))
+
+        def token_for(user_id):
+            if failure:
+                raise failure
+            return "google-token"
+
+        with patch.object(scanner, "google_token", token_for), patch.object(scanner, "message_ids", ids), \
+                patch.object(scanner, "raw_email", lambda token, message_id: inbox[message_id]):
+            scanner.scan_once(self.store)
+        return self.store.mailbox(self.mailbox["id"])
+
+    def test_first_scan_looks_back_a_fortnight_and_later_ones_only_since_the_last(self):
+        self.scan()
+        self.scan({})
+        self.assertIn("newer_than:14d", self.queries[0])
+        self.assertIn("after:", self.queries[1])
+        self.assertIsNotNone(self.store.mailbox(self.mailbox["id"])["last_checked"])
+
+    def test_only_an_id_and_a_verdict_are_kept_for_mail_that_is_not_a_threat(self):
+        mailbox = self.scan()
+        verdicts = dict(self.store.db.execute("SELECT message_id, verdict FROM scanned").fetchall())
+        self.assertEqual(verdicts, {"a": "flagged", "b": "safe", "c": "withheld"})
+        self.assertEqual(mailbox["checked"], 3)
+        self.assertEqual(len(self.rt.incidents), 1)                              # only the lure became an alert
+        self.assertEqual(len(self.rt.reports), 1)
+        everything = " ".join(str(report.payload) + str(report.metadata) for report in self.rt.reports.values())
+        self.assertNotIn("Woolworths", everything)
+        self.assertNotIn("482913", everything)
+
+    def test_mail_goes_to_the_person_whose_mailbox_it_came_from(self):
+        other = self.store.create_person("Sipho", "Uncle", "caregiver_1")
+        invite = self.store.create_invite(other["id"], "caregiver_1")
+        other_box = self.store.accept_invite(invite["token"], "person_2")
+        inboxes = {"tok-person_1": {"a": self.lure}, "tok-person_2": {}}     # only Thandi's mailbox holds the lure
+        with patch.object(scanner, "google_token", lambda user_id: f"tok-{user_id}"),                 patch.object(scanner, "message_ids", lambda token, query: iter(list(inboxes[token]))),                 patch.object(scanner, "raw_email", lambda token, message_id: inboxes[token][message_id]):
+            scanner.scan_once(self.store)
+        self.assertEqual(len(self.rt.incidents), 1)
+        self.assertEqual(len(pool.runtime_for(other["id"]).incidents), 0)
+        self.assertEqual(self.store.mailbox(other_box["id"])["checked"], 0)
+        self.assertTrue(self.rt.world.flagged)
+        self.assertFalse(pool.runtime_for(other["id"]).world.flagged)
+
+    def test_a_message_already_scanned_is_not_read_again(self):
+        self.scan()
+        reads = []
+        with patch.object(scanner, "handle_mail", lambda mailbox, raw: reads.append(raw) or "safe"):
+            with patch.object(scanner, "google_token", return_value="t"), patch.object(scanner, "message_ids", lambda t, q: iter(["a", "b"])), \
+                    patch.object(scanner, "raw_email", lambda t, m: self.inbox[m]):
+                scanner.scan_once(self.store)
+        self.assertEqual(reads, [])
+
+    def test_flagged_mail_keeps_its_text_until_the_alert_is_resolved(self):
+        self.scan()
+        report = next(iter(self.rt.reports.values()))
+        self.assertEqual(report.metadata["origin"], f"mailbox:{self.mailbox['id']}")
+        self.assertIn("protection plan", report.payload)
+        incident = next(iter(self.rt.incidents.values()))
+        self.assertEqual(scanner.blank_resolved(), 0)
+        incident.status = IncidentState.RESOLVED
+        self.assertEqual(scanner.blank_resolved(), 1)
+        self.assertEqual((report.payload, incident.summary), ("", ""))
+        self.assertNotIn("sender", report.metadata)
+
+    def test_resolved_mail_that_was_shared_by_hand_is_left_alone(self):
+        shared = take_in_email(self.lure, self.rt)            # came in through the API, not a mailbox
+        self.rt.incidents[shared.incident_id].status = IncidentState.RESOLVED
+        self.assertEqual(scanner.blank_resolved(), 0)
+        self.assertIn("protection plan", self.rt.reports[shared.report_id].payload)
+        self.assertNotEqual(self.rt.incidents[shared.incident_id].summary, "")
+
+    def test_a_refused_token_is_a_problem_at_once(self):
+        mailbox = self.scan(failure=scanner.HTTPException(403, "Google is connected without Gmail read access."))
+        self.assertEqual(mailbox["status"], "problem")
+        self.assertIn("Gmail read access", mailbox["last_error"])
+
+    def test_a_short_outage_is_retried_quietly_and_a_long_one_is_a_problem(self):
+        import httpx
+        down = httpx.ConnectError("no route")
+        self.assertEqual(self.scan(failure=down)["status"], "connected")
+        earlier = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat(timespec="seconds")
+        self.store.db.execute("UPDATE mailboxes SET failing_since = ?", (earlier,))
+        self.assertEqual(self.scan(failure=down)["status"], "problem")
+
+    def test_a_mailbox_recovers_when_the_token_works_again(self):
+        self.scan(failure=scanner.HTTPException(401, "Google refused the token."))
+        recovered = self.scan({})
+        self.assertEqual((recovered["status"], recovered["last_error"]), ("connected", None))
+
+    def test_a_disconnected_mailbox_is_never_read(self):
+        self.store.disconnect(self.person["id"])
+        self.scan()
+        self.assertEqual(self.queries, [])
+        self.assertEqual(len(self.rt.reports), 0)
+
+    def test_the_forwarded_inbox_follows_the_same_rules_and_reports_its_health(self):
+        forwarded = self.store.ensure_forwarded(self.person["id"], "kinguard@example.com")
+        handle = scanner.forwarded_handler(self.store)
+        handle(SAFE_EMAIL)
+        handle(self.lure)
+        self.assertEqual(len(self.rt.incidents), 1)
+        self.assertEqual(self.store.mailbox(forwarded["id"])["checked"], 2)
+        scanner.note_forwarded(self.store, "OSError")
+        self.assertEqual(self.store.mailbox(forwarded["id"])["last_error"], "OSError")
+        scanner.note_forwarded(self.store, None)
+        self.assertIsNone(self.store.mailbox(forwarded["id"])["last_error"])
+
+    def test_report_numbers_are_not_reused_after_mail_is_forgotten(self):
+        first = self.rt.next_report_number()
+        scanner.handle_mail(self.mailbox, SAFE_EMAIL)
+        self.assertEqual(self.rt.next_report_number(), first + 2)
+
+
 MANDATE = "Nedbank: Mandate registered for R189.00 by TECHCARE SUPPORT. Reply within 24h to reject."
 DEBIT = "YourBank: Debit order of R349.00 to TECHCARE ref TCS8841 from acc 1234567890 on 02 Oct."
 
@@ -669,7 +997,7 @@ class MandateDeadlineAndSoloTests(unittest.TestCase):
     def test_guardian_setting_and_audience_filter_over_the_api(self):
         client = TestClient(app)
         client.post("/api/reset")
-        self.assertTrue(client.get("/api/health").json()["guardian"])
+        self.assertTrue(client.get("/api/state").json()["world"]["guardian"])
         self.assertEqual(client.post("/api/settings/guardian", json={"enrolled": False}).json(), {"guardian": False})
         sent = client.post("/api/intake/share", json={"text": DEBIT, "sender": "YourBank"}).json()
         self.assertEqual([item["review_id"] for item in client.get("/api/reviews", params={"audience": "PERSON"}).json()], [sent["review_id"]])
@@ -678,7 +1006,7 @@ class MandateDeadlineAndSoloTests(unittest.TestCase):
         answer = client.post(f"/api/incidents/{lure['incident_id']}/feedback", json={"legitimate": True}).json()
         self.assertEqual(client.post(f"/api/reviews/{answer['review_id']}/decision", json={"approved": True}).status_code, 409)
         client.post("/api/reset")
-        self.assertTrue(client.get("/api/health").json()["guardian"])
+        self.assertTrue(client.get("/api/state").json()["world"]["guardian"])
 
 
 class WhatsAppAndNewScamTests(unittest.TestCase):

@@ -4,3 +4,6 @@ __pycache__/
 decisions.jsonl
 data/
 .env
+
+backend/kinguard.db
+backend/kinguard.db-journal

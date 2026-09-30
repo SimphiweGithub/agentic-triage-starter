@@ -7,7 +7,9 @@ approve or reject.
 
 - Base address: `http://127.0.0.1:8000/api`
 - Interactive documentation with every schema: `http://127.0.0.1:8000/docs`
-- All bodies are JSON. There is no authentication yet.
+- All bodies are JSON. Every route except `GET /health` and `POST /intake/whatsapp`
+  needs a signed-in Clerk session: `Authorization: Bearer <token>` (see
+  [Signing in and roles](#signing-in-and-roles)).
 - State is in memory. Restarting the server, or `POST /reset`, clears it.
 
 ## Running it
@@ -224,31 +226,71 @@ as `POST /intake/email` would. Nothing changes for the front end: the new
 incident simply appears in `GET /incidents`. `GET /health` reports whether the
 mailbox and the models are switched on.
 
-## Gmail
+## Signing in and roles
 
-The only routes that need a signed-in user. The front end signs the user in
-with Clerk, then sends the session token on each call:
+The front end signs users in with Clerk and sends the session token on every
+call. There are two roles, stored on the server and on the Clerk user's public
+metadata (`role`):
 
-```
-Authorization: Bearer <await getToken() from @clerk/react>
-```
-
-| Call | Returns |
-|---|---|
-| `GET /gmail/messages?max_results=10&q=in:inbox` | The newest emails: `[{id, thread_id, sender, subject, date, snippet}]`. `q` is any Gmail search, for example `is:unread`. |
-| `POST /gmail/messages/{id}/intake` | Takes that email in exactly as `POST /intake/email` would; returns a decision or `withheld`. |
+| Role | Who | What they may call |
+|---|---|---|
+| `caregiver` | The person who looks after someone | Everything below |
+| `person` | The protected person, who connected their own Gmail | `GET /me`, `POST /me/disconnect`, `GET /outbox`, `POST /incidents/{id}/feedback` |
+| none | Signed in but not linked to anyone yet | `GET /me`, `POST /people` (only if nobody is looked after yet), `POST /invites/{token}/accept` |
 
 | Code | Meaning |
 |---|---|
-| `401` | No valid Clerk session, or Google refused the token |
-| `403` | No Google account connected, or connected without Gmail read access |
-| `502` | Gmail returned an error |
+| `401` | No valid Clerk session |
+| `403` | Signed in, but not allowed: not linked yet, or the wrong role |
+| `404` | The person, invite or mailbox is not yours, or does not exist |
 | `503` | `CLERK_SECRET_KEY` is not set on the server |
 
-For this to work, the Clerk application needs Google sign-in with the scope
+This server looks after **one** person for now, and incidents are one shared
+pool. Partitioning them by person is the next stage.
+
+## People, invites and mailboxes
+
+The caregiver never reads the person's mail. The person connects their own
+Gmail once, from a link; the server then scans it in the background and the
+caregiver only ever sees alerts.
+
+| Call | Who | Returns |
+|---|---|---|
+| `GET /me` | anyone signed in | `{user_id, role, person, can_add_person, mailbox}`. `person` is `{id, name, relation}` or null; `mailbox` is the person's own Gmail state, for the `person` role |
+| `POST /people` with `{"name": "...", "relation": "..."}` | unlinked user | The same as `GET /me`. The caller becomes the caregiver. `409` if someone is already looked after |
+| `GET /people/{id}/mailboxes` | caregiver | `[{id, kind, label, status, connected_at, last_checked, last_error, checked}]` |
+| `POST /people/{id}/invites` | caregiver | `{token, created_at, expires_at}`. Single use, valid 7 days |
+| `GET /people/{id}/invites` | caregiver | Invites still waiting |
+| `POST /people/{id}/invites/{token}/cancel` | caregiver | `{status: "cancelled"}` |
+| `GET /invites/{token}` | **nobody: no sign-in** | `{valid, problem, person_name}`. `person_name` is set only when the link works |
+| `POST /invites/{token}/accept` | the person, signed in with Google | The same as `GET /me`. `410` with a plain reason if the link is cancelled, used or expired; `403` if Google access to Gmail was not granted (the link stays usable); `409` if the account is already linked |
+| `POST /me/disconnect` | the person | The same as `GET /me`. Stops scanning at once and asks Google to revoke the token |
+
+**Mailbox `kind`** is `gmail` (the person's own, one per person) or `forwarded`
+(the server's own IMAP mailbox, see Live inbox). **`status`**:
+
+| Status | Meaning | What to show |
+|---|---|---|
+| `connected` | Being checked | "Last checked 2 minutes ago" |
+| `problem` | The token was refused or revoked, or Gmail has been unreachable for over 15 minutes. `last_error` says why | A problem for the caregiver, with "send a new invite link" |
+| `disconnected` | The person disconnected. Only a new invite reconnects it | A problem for the caregiver |
+
+`checked` counts messages with a verdict. The server keeps nothing else about
+mail judged safe. A flagged email keeps its text until its alert is resolved.
+
+**Scanning.** The first scan looks back 14 days; after that the server checks
+every minute (`SCAN_SECONDS`). A one-time code is withheld, as for every other
+intake. A short outage is retried quietly and only becomes a `problem` after 15
+minutes.
+
+**Setting up Google.** The Clerk application needs Google sign-in with the scope
 `https://www.googleapis.com/auth/gmail.readonly`, using your own Google OAuth
 credentials, because Clerk's shared development credentials cannot add scopes.
-`GET /health` reports `"gmail": true` when the server has a Clerk key.
+That scope is restricted: until Google verifies the app, it runs in testing
+mode, limited to 100 listed test users, and refresh tokens expire after about
+seven days, so a connection needs re-signing weekly (it then shows as a
+`problem`). Verification is a separate step before real users. `GET /health`
+reports `"gmail": true` when the server has a Clerk key.
 
 ## Demo controls
 
@@ -275,5 +317,6 @@ message in it demonstrates.
 - The bank, company registry and sender blocklist are simulated. Nothing
   leaves the machine except the masked message text sent to the models and
   domain names sent to the public registration lookup.
-- There is one protected person and no login. Do not expose this server
-  beyond the demo machine.
+- There is one protected person. Sign-in is on by default. `KINGUARD_DEV_OPEN=1`
+  turns it off for the plain console and local scripts; never set it on a server
+  anyone else can reach.

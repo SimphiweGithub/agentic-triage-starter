@@ -6,9 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.gmail import router as gmail_router
 from api.mailbox import start_polling
-from api.routes import router, take_in_email
+from api.people import router as people_router
+from api.auth import dev_open
+from api.routes import gateway_router, open_router, person_router, router
+from api.scanner import forwarded_handler, note_forwarded, start_scanning
+from api.store import get_store
 
 ROOT = Path(__file__).resolve().parent
 app = FastAPI(title="KinGuard API", version="0.2.0",
@@ -20,9 +23,19 @@ origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",")
 if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"])
 
-app.include_router(router, prefix="/api")
-app.include_router(gmail_router, prefix="/api")  # needs CLERK_SECRET_KEY; answers 503 without it
-start_polling(take_in_email)  # live mailbox; does nothing unless IMAP_HOST is set
+app.include_router(open_router, prefix="/api")      # /api/health
+app.include_router(people_router, prefix="/api")    # /api/me, /api/people, /api/invites
+for each in (gateway_router, person_router, router):
+    app.include_router(each, prefix="/api/people/{person_id}")  # everything about one person names them in the address
+    if dev_open():  # the plain console cannot name a person, so in development mode the same routes also answer without one
+        app.include_router(each, prefix="/api", include_in_schema=False)
+
+store = get_store()
+if os.getenv("IMAP_HOST"):
+    for person in store.people():
+        store.ensure_forwarded(person["id"], os.getenv("IMAP_USER", "Forwarded inbox"))
+start_polling(forwarded_handler(store), lambda error: note_forwarded(store, error))  # the server's own mailbox; needs IMAP_HOST
+start_scanning(store)  # each person's connected Gmail; needs CLERK_SECRET_KEY
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 

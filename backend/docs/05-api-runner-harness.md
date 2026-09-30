@@ -6,26 +6,34 @@ The ways into the engine, the way to score it, and the optional model code.
 
 ## `main.py`
 
-- **Lines 1–11** — imports, including the routers from `api/routes.py` and
-  `api/gmail.py`.
-- **Line 13** — `ROOT` is the folder this file is in.
-- **Lines 14–15** — `app` is the web application, with a title and description
+- **Lines 1–13** — imports, including the routers from `api/routes.py` and
+  `api/people.py`, the background scanners from `api/scanner.py`, and the store.
+- **Line 15** — `ROOT` is the folder this file is in.
+- **Lines 16–17** — `app` is the web application, with a title and description
   that appear in the generated documentation at `/docs`.
-- **Lines 19–21** — cross-origin access. `CORS_ORIGINS` is read from the
+- **Lines 21–23** — cross-origin access. `CORS_ORIGINS` is read from the
   environment and split on commas into `origins`. If the list is empty, which
   is the default, no cross-origin middleware is added and a page served from
   anywhere else cannot call the API. If addresses are listed, only those may
   call it, only with GET and POST, and only with the `Content-Type` and
   `Authorization` headers. `Authorization` carries the Clerk session token
-  that the Gmail routes need.
-- **Line 23** — every route in the router is served under `/api`.
-- **Line 24** — the Gmail routes are served under `/api/gmail`. They answer
-  503 unless `CLERK_SECRET_KEY` is set.
-- **Line 25** — start the live mailbox thread. It does nothing unless
-  `IMAP_HOST` is set.
-- **Line 26** — the `static` folder is served under `/static`.
-- **Lines 29–32** — the address `/` returns a plain developer console for
-  watching the engine. The product front end is built separately.
+  that every route except `/health` and the WhatsApp webhook needs.
+- **Lines 25–26** — the four routers (open, person, caregiver, people) are
+  served under `/api`.
+- **Line 28** — open the store (`api/store.py`).
+- **Lines 29–31** — if the server has its own IMAP mailbox, make sure it is
+  listed as a "forwarded inbox" mailbox of each person already looked after.
+  A person added later gets it when they are added (`api/people.py`).
+- **Line 32** — start the live mailbox thread. It does nothing unless
+  `IMAP_HOST` is set. Each email goes through `forwarded_handler`, so it is
+  kept under the same retention rules as Gmail, and each check's result is
+  written to the mailbox's status by `note_forwarded`.
+- **Line 33** — start the Gmail scanner. It does nothing unless
+  `CLERK_SECRET_KEY` is set.
+- **Line 34** — the `static` folder is served under `/static`.
+- **Lines 37–40** — the address `/` returns a plain developer console for
+  watching the engine. The product front end is built separately. The console
+  cannot sign in, so it only works with `KINGUARD_DEV_OPEN=1` (see `api/auth.py`).
 
 ---
 
@@ -33,11 +41,22 @@ The ways into the engine, the way to score it, and the optional model code.
 
 The contract for the front end is in `API.md`. This section explains the code.
 
-**Line 21** — `router` collects the endpoints.
-**Line 22** — `runtime` is the single `TriageRuntime` for the whole server. All
-state lives in it, in memory; restarting the server clears it.
+**Lines 22–24** — three routers, by who may call them:
+- `router` (line 22) needs a signed-in **caregiver**. Almost every route is here.
+- `person_router` (line 23) accepts the caregiver **or the protected person**:
+  the two routes the person may use, `GET /outbox` and the incident feedback.
+- `open_router` (line 24) needs no session: `GET /health`, and the WhatsApp
+  gateway webhook, which a gateway cannot sign in to.
 
-### Request and response shapes (lines 25–67)
+Each `dependencies=[Depends(...)]` runs `api/auth.py` before the route body.
+Line 11 imports `caregiver` and `member` from there.
+
+**Line 25** — `runtime` is the single `TriageRuntime` for the whole server. The
+incidents, reviews and reports live in it, in memory; restarting the server
+clears them. What must survive a restart (people, invites, mailboxes) is in
+`api/store.py`.
+
+### Request and response shapes (lines 28–70)
 
 Each class describes a JSON body. FastAPI rejects a request that does not
 fit, with error 422, before any of our code runs.
@@ -53,91 +72,99 @@ fit, with error 422, before any of our code runs.
 - `Withheld` — the reply when a message is discarded: `status` and `reason`.
 - `PersonMessage` — one warning for the person: `incident_id` and `message`.
 
-### Helpers (lines 70–80)
+### Helpers (lines 73–83)
 
-- **70–71 `_now`** — the current UTC time as text.
-- **83–85 `take_in_email`** — one raw email in, one decision out. The API
+- **73–74 `_now`** — the current UTC time as text.
+- **86–88 `take_in_email`** — one raw email in, one decision out. The API
   route and the live mailbox both call it, so they cannot behave differently.
-- **74–80 `_take_in`** — the shared path for live intake:
-  - **76–78** — ask the domain whether the row must be withheld. If so, return
+- **77–83 `_take_in`** — the shared path for live intake:
+  - **79–81** — ask the domain whether the row must be withheld. If so, return
     a `Withheld` reply and store nothing.
-  - **79** — parse it safely.
-  - **80** — process it safely. A decision always comes back.
+  - **82** — parse it safely. The number passed in comes from
+    `runtime.next_report_number()`, which is never reused, so a report ID made
+    from it cannot collide even after the scanner forgets safe mail.
+  - **83** — process it safely. A decision always comes back.
 
 ### Endpoints
 
-Each `@router` line names the method, the path, a `tags` group used to
+Each decorator names the router (see above), the method, the path, a `tags` group used to
 organise `/docs`, and a `response_model`. The response model does two things:
 it documents the reply, and it strips anything not in the model before the
 reply is sent.
 
 | Lines | Method and path | Group | What it does |
 |---|---|---|---|
-| 90–93 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
-| 96–99 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
-| 102–109 | `POST /intake/whatsapp` | intake | Webhook for a WhatsApp gateway; takes the message in like a shared SMS |
-| 112–118 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
-| 123–126 | `GET /outbox` | person | The warnings written for the person |
-| 129–137 | `POST /incidents/{id}/feedback` | person | The person's own answer about an incident |
-| 142–145 | `GET /incidents` | caregiver | Every incident |
-| 148–158 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
-| 161–166 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
-| 169–172 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
-| 176–180 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
-| 183–191 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
-| 194–202 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
-| 207–211 | `GET /health` | system | Confirms the server is up, guardian status, and optional parts: mailbox, Jev, Gemini, live lookups and Gmail (true when `CLERK_SECRET_KEY` is set) |
-| 214–218 | `GET /state` | system | Everything in one call, plus the simulated world |
-| 222–226 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
-| 229–233 | `POST /reset` | system | Empty everything |
-| 236–243 | `POST /replay` | system | Reset, then process a list of reports |
-| 246–254 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 257–261 | `POST /replay/step` | system | Process the next messages in the queue |
+| 93–96 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
+| 99–102 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
+| 105–112 | `POST /intake/whatsapp` | intake (open) | Webhook for a WhatsApp gateway; takes the message in like a shared SMS |
+| 115–121 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
+| 126–129 | `GET /outbox` | person | The warnings written for the person |
+| 132–140 | `POST /incidents/{id}/feedback` | person | The person's own answer about an incident |
+| 145–148 | `GET /incidents` | caregiver | Every incident |
+| 151–161 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
+| 164–169 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
+| 172–175 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
+| 179–183 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
+| 186–194 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
+| 197–205 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
+| 210–214 | `GET /health` | system | Confirms the server is up, guardian status, and optional parts: mailbox, Jev, Gemini, live lookups and Gmail scanning (true when `CLERK_SECRET_KEY` is set). No session needed |
+| 217–221 | `GET /state` | system | Everything in one call, plus the simulated world |
+| 225–229 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
+| 232–236 | `POST /reset` | system | Empty everything |
+| 239–246 | `POST /replay` | system | Reset, then process a list of reports |
+| 249–257 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 260–264 | `POST /replay/step` | system | Process the next messages in the queue |
 
-**`feedback` in detail (129–137)**
-- **132–133** — unknown incident: error 404.
-- **134** — a sentence describing the answer.
-- **135–136** — the answer is wrapped as a `RawInputReport` with `source`
+**`feedback` in detail (135–143)**
+- **135–136** — unknown incident: error 404.
+- **137** — a sentence describing the answer.
+- **138–139** — the answer is wrapped as a `RawInputReport` with `source`
   `"person"`. Its metadata names the incident (so the correlator links it
   explicitly) and carries the `feedback` value.
-- **137** — it is processed like any other message. The person's answer is
+- **140** — it is processed like any other message. The person's answer is
   evidence that goes through the same policy; it is not a command.
 
-**`intake_whatsapp` in detail (102–109)**
-- **103** — `async`, because reading the raw request body has to be awaited.
-- **105** — a WhatsApp gateway (this follows Twilio's format) posts a form,
+**`intake_whatsapp` in detail (105–112)**
+- **106** — `async`, because reading the raw request body has to be awaited.
+- **108** — a WhatsApp gateway (this follows Twilio's format) posts a form,
   not JSON. `parse_qs` turns `From=...&Body=...` into a dictionary. Reading
   the body ourselves avoids adding a form-parsing package.
-- **106** — `text` is the message; `sender` is the number, with the
+- **109** — `text` is the message; `sender` is the number, with the
   `whatsapp:` prefix removed.
-- **107–108** — an empty message is ignored; otherwise it goes through the
+- **110–111** — an empty message is ignored; otherwise it goes through the
   same `_take_in` path as a shared SMS, with the channel set to `whatsapp`.
-- **109** — reply with an empty response. A gateway would send any text in the
+- **112** — reply with an empty response. A gateway would send any text in the
   reply back to the sender, and the agent must never answer a scammer.
 
 Anyone who can reach the server can post to this route. A real deployment
 would check the gateway's signature on each request; that is not built.
 
-**`guardian_briefs` in detail (176–180)** — for every review that is
+**`guardian_briefs` in detail (179–183)** — for every review that is
 `PENDING` and addressed to the `CAREGIVER`, build a brief from the review and
 the decision that opened it.
 
-**`reviews` in detail (169–173)** — `status` and `audience` are optional query
+**`reviews` in detail (172–176)** — `status` and `audience` are optional query
 parameters. `?status=PENDING&audience=PERSON` returns what is waiting for the
 person themselves; with nothing, every review is returned.
 
-**`replay_load` in detail (246–254)**
-- **250** — strip an invisible marker from the start of the text, read the
+**`replay_load` in detail (249–257)**
+- **253** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **251–252** — an unsupported file type returns error 400.
-- **253** — parse every row safely and hand the list to the runtime's queue.
+- **254–255** — an unsupported file type returns error 400.
+- **256** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.
 
-What the API does not have: authentication on these routes, and more than one
-protected person. Both are stated limits. Only the Gmail routes in
-`api/gmail.py` check who is signed in.
+What the API does not have yet: more than one protected person. Incidents and
+reviews are one shared pool, so the server looks after one person (`api/store.py`
+refuses a second). Every route is scoped by role now, but stage 2 must also
+partition this pool by person before a second person can be added.
+
+**Development switch.** With `KINGUARD_DEV_OPEN=1`, `api/auth.py` skips Clerk and
+the routes open up, so the plain console in `static/` and local scripts still
+work. It is off by default. With it on, an `X-Dev-User` header picks who the
+caller is. Never set it on a server anyone else can reach.
 
 ---
 
@@ -195,13 +222,17 @@ is what lets the test use a fake mailbox.
 - **29** — return how many were read.
 - **30–31** — always log out, even if something failed.
 
-### `start_polling` (lines 34–50)
+### `start_polling` (lines 34–57)
 
-- **36–37** — if `IMAP_HOST` is not set, do nothing and return `None`.
-- **38** — how often to check, 15 seconds unless `IMAP_POLL_SECONDS` says otherwise.
-- **40–46 `loop`** — forever: check the mailbox, and if that fails for any
-  reason, print the error and carry on. A mailbox problem never stops the server.
-- **48–50** — run `loop` on a background thread. `daemon=True` means it stops
+- **34–38** — `on_result` is optional. It hears `None` after each good check
+  and a short description (the error's name, never its text) after a bad one.
+  `main.py` uses it to keep the forwarded mailbox's status up to date.
+- **39–40** — if `IMAP_HOST` is not set, do nothing and return `None`.
+- **41** — how often to check, 15 seconds unless `IMAP_POLL_SECONDS` says otherwise.
+- **43–53 `loop`** — forever: check the mailbox and report success (47–48). If
+  that fails for any reason, print the error, report it (51–52) and carry on.
+  A mailbox problem never stops the server.
+- **55–57** — run `loop` on a background thread. `daemon=True` means it stops
   when the server stops.
 
 Not yet run against a real mailbox; the test uses a stand-in.
@@ -210,72 +241,217 @@ Not yet run against a real mailbox; the test uses a stand-in.
 
 ## `api/gmail.py`
 
-Reads Gmail through the Google account the user signed in with via Clerk.
-Clerk keeps the Google OAuth token and refreshes it; the server asks Clerk for
-it on every call and never stores it.
+Reads Gmail through the Google account the **protected person** connected via
+Clerk. Clerk keeps the Google OAuth token and refreshes it; the server asks
+Clerk for it on every call and never stores it. The caregiver's own mailbox is
+never read, and there are no routes here: only helpers that `api/scanner.py`
+and `api/people.py` use.
 
-### Imports and constants (lines 6–24)
+### Imports and constants (lines 7–18)
 
-- **7** — `html` turns Gmail's escaped snippets (`&amp;`, `&#39;`) back into plain text.
-- **9** — a thread pool, so the list route can fetch several emails at once.
-- **11** — `httpx` makes the calls to Gmail.
-- **12–14** — Clerk's Python SDK: the client for Clerk's own API, and the
-  function that checks a session token.
-- **18** — `take_in_email` and `Withheld` from `api/routes.py`, so an email
-  from Gmail takes exactly the same path as one sent to `POST /intake/email`.
-- **21** — `GMAIL`, the Gmail API address for the signed-in account.
-- **22** — `READ_SCOPE`, the Google permission to read mail and nothing else.
-- **24** — every route here is served under `/gmail`, which `main.py` puts
-  under `/api`.
+- **7** — `base64` decodes the raw email Gmail returns.
+- **9** — `Iterator`, the type of a generator that hands back ids one by one.
+- **11** — `httpx` makes the calls to Gmail and to Google's revoke address.
+- **12–13** — Clerk's client for its own API, and FastAPI's `HTTPException`.
+- **15** — `GMAIL`, the Gmail API address for the connected account.
+- **16** — `READ_SCOPE`, the Google permission to read mail and nothing else.
+- **17** — `REVOKE`, Google's address for cancelling a token.
+- **18** — `MAX_PAGES`: a scan looks at up to 10 pages of 50 emails.
 
-### `GmailMessage` (lines 27–33)
+### `google_token` (lines 21–30)
 
-What the list route returns for each email: its Gmail id and thread id, who
-sent it, the subject, the date as the email states it, and Gmail's short
-snippet of the text.
-
-### `signed_in_user` (lines 36–45)
-
-A FastAPI dependency: each route that names it runs it first.
-
-- **38–40** — without `CLERK_SECRET_KEY` the server cannot check anyone, so it
-  answers 503 and says what is missing.
-- **41** — the front end addresses from `CORS_ORIGINS`. When listed, a token
-  is only accepted if Clerk issued it to one of them.
-- **42** — Clerk checks the `Authorization: Bearer` session token: signature,
-  expiry and, if listed, which front end it was issued to.
-- **43–44** — no valid session: 401.
-- **45** — return the Clerk user id (`sub`).
-
-### `google_token` (lines 48–57)
-
-- **50–51** — ask Clerk for the user's Google access token.
-- **52–54** — no Google account connected: 403.
-- **55–56** — Google is connected but without `READ_SCOPE`: 403, with a
+- **23–24** — ask Clerk for the user's Google access token.
+- **25–26** — no Google account connected: 403.
+- **27–28** — Google is connected but without `READ_SCOPE`: 403, with a
   message saying to sign in with Google again.
-- **57** — the token.
+- **29–30** — the token.
 
-### `gmail_get` (lines 60–68)
+### `gmail_get` (lines 33–43)
 
-One GET to Gmail with the token. Google refusing the token becomes 401, an
-unknown email 404, and any other Gmail error 502. The test replaces this
-function, so no test reaches Google.
+One GET to Gmail with the token. Google refusing the token becomes 401,
+refusing access to the mailbox 403, an unknown email 404, and any other Gmail
+error 502. The scanner treats 401 and 403 as "this connection is broken" and
+anything else as a temporary failure. Tests replace this function, so none
+reaches Google.
 
-### `_summary` (lines 71–74)
+### `message_ids` (lines 46–56)
 
-Turns one Gmail message into a `GmailMessage`. Header names are matched
-without regard to case; a missing header is an empty string. The snippet is
-unescaped, because Gmail sends it HTML-escaped.
+A generator of the ids of every email matching a Gmail search, newest first.
+It asks for 50 at a time (line 50) and follows `nextPageToken` (55–56) for at
+most `MAX_PAGES` pages, so one scan never runs away on a huge mailbox.
 
-### Endpoints
+### `raw_email` (lines 59–62)
 
-| Lines | Route | What it does |
-|---|---|---|
-| 77–85 | `GET /gmail/messages` | The newest emails matching `q` (default `in:inbox`), at most `max_results` (1–50, default 10). One list call, then one call per email for its From, Subject and Date headers, up to 8 at a time (line 84), in the original order. Read only. |
-| 88–92 | `POST /gmail/messages/{id}/intake` | Fetch the full raw email, decode it from Gmail's URL-safe base64 (adding back the padding Gmail leaves off), and hand it to `take_in_email`. Returns a decision, or `withheld` if it held a one-time code. |
+Fetches one email in `raw` format, decodes it from Gmail's URL-safe base64
+(adding back the padding Gmail leaves off) and returns it as the text of an
+`.eml` file, exactly what `take_in_email` expects.
 
-Listing has been run against a real Gmail account through the front end.
-The tests use stand-ins for Clerk and Gmail.
+### `revoke` (lines 65–70)
+
+Tells Google to cancel a token, for the person's Disconnect button. Best
+effort: if Google cannot be reached it prints the error's name and carries on,
+because the person can also remove access in their Google account.
+
+---
+
+## `api/auth.py`
+
+Who is calling. Clerk proves who the user is; the store says which person they
+are linked to and in what role. Every route except `/health` and the WhatsApp
+webhook goes through here.
+
+- **13–17 `Caller`** — the user's Clerk id, their `role` (`caregiver`,
+  `person`, or `None` before they are linked to anyone) and the person they are
+  linked to.
+- **20–22 `dev_open`** — development only. `KINGUARD_DEV_OPEN=1` turns Clerk off
+  so the plain console and local scripts still work. Off by default.
+- **25–36 `who`** — the Clerk user id behind the session token.
+  - **27–28** — in development mode, read it from an `X-Dev-User` header
+    (default `dev`), so a developer can act as different people.
+  - **29–31** — without `CLERK_SECRET_KEY` the server cannot check anyone: 503.
+  - **32** — the front end addresses from `CORS_ORIGINS`; a token is only
+    accepted if Clerk issued it to one of them.
+  - **33–35** — Clerk checks the `Authorization: Bearer` token; no valid
+    session is 401.
+  - **36** — the user id (`sub`).
+- **39–41 `caller`** — looks the user up in the store and builds a `Caller`.
+- **44–48 `caregiver`** — passes only a caregiver. Someone not yet linked to
+  anyone gets 403 "Add the person you look after first", so a stranger who
+  signs up sees nothing. In development mode an unlinked caller is let through.
+- **51–55 `member`** — passes a caregiver or the protected person; used for the
+  few routes both may call.
+- **58–62 `caregiver_of`** — the caregiver of *this* person. Another person's
+  id answers 404, as if it did not exist.
+- **65–74 `set_clerk_role`** — also writes the role to the user's Clerk public
+  metadata so the front end can read it. The store stays the authority: a
+  Clerk failure is printed and ignored, because the link is already saved.
+
+---
+
+## `api/store.py`
+
+What must survive a restart, in a SQLite file (`KINGUARD_DB`, default
+`backend/kinguard.db`, ignored by git). Incidents and reviews stay in memory.
+
+- **12–14** — the default file, how long an invite lasts (7 days) and how long a
+  temporary Gmail failure may last before it counts as a problem (15 minutes).
+- **16–33 `SCHEMA`** — five tables: `people`; `links` (which user is linked to
+  which person, as `caregiver` or `person`); `invites`; `mailboxes` (state, the
+  Clerk user that owns the Google connection, last check, last error and when
+  failures began); `scanned` (a mailbox id, a message id and a verdict, and
+  **nothing else about the message**).
+- **35–40 `now`, `stamp`** — the current time, and a time as text.
+- **44–49** — open the file (one shared connection, guarded by a lock) and
+  create the tables if missing.
+- **51–59** — `close`, and `reset`, which empties every table for tests.
+- **61–67** — `_one` and `_all` turn rows into plain dictionaries.
+- **70–76** — `people`, `person`.
+- **78–87 `create_person`** — refuses if anyone is already looked after (stage 1
+  is one person per server), otherwise adds the person and links the creator
+  as their caregiver.
+- **89–92 `link_of`** — the person and role for a user, or `None`.
+- **96–103 `create_invite`** — a random, unguessable, single-use token.
+- **105–112** — `invite`, and `pending_invites` (not used, cancelled or expired).
+- **114–119 `cancel_invite`** — only an invite still waiting can be cancelled.
+- **121–133 `accept_invite`** — marks the invite used, links the user as the
+  person, replaces any earlier Gmail mailbox (one per person for now) and adds
+  a new one, `connected`.
+- **137–144** — `mailbox` and `mailboxes`, each with `checked`, how many
+  messages have a verdict.
+- **146–156 `ensure_forwarded`** — the server's own IMAP mailbox, added once.
+- **158–161 `disconnect`** — Gmail mailbox becomes `disconnected`.
+- **163–167 `mark_checked`** — a good scan: `connected`, time noted, errors
+  cleared. Never wakes a `disconnected` mailbox.
+- **169–181 `mark_failure`** — a revoked or refused token (`permanent`) is a
+  `problem` at once. Anything else only becomes one once failures have lasted
+  `OUTAGE_MINUTES`.
+- **183–190** — `seen` and `record_scanned`: has this message been handled, and
+  remember its verdict.
+- **193–203 `invite_problem`** — why an invite cannot be used, in words the
+  person would understand, or `None` if it can.
+- **206–212 `get_store`** — one shared store, opened on first use so tests can
+  point `KINGUARD_DB` at `:memory:` first.
+
+---
+
+## `api/people.py`
+
+Who is looked after, who looks after them, and how the person connects their
+own Gmail. The contract is in `API.md`.
+
+- **11** — these routes are served under `/api` too, tagged `people`.
+- **14–16 `NewPerson`** — a name (1–80 characters) and an optional relation.
+- **19–23 `_mailbox`** — what a mailbox looks like to the front end: its state,
+  when it was last checked, the last error, how many messages were checked.
+  Never a token, never a message.
+- **25–26 `_invite`** — token and dates.
+- **29–37 `_me`** — the signed-in user's role and person; `can_add_person` is
+  true only for someone with no link while nobody is looked after yet; a
+  protected person also gets their own Gmail mailbox's state.
+- **40–43 `GET /me`** — who you are.
+- **46–59 `POST /people`** — the first caregiver adds the person. Already
+  linked: 409. Someone already looked after: 409. Adds the forwarded inbox if
+  the server has one (56–57), and stores the `caregiver` role in Clerk too.
+- **62–65 `GET /people/{id}/mailboxes`** — the person's mailboxes and whether
+  mail is being checked. 404 for anyone else's person.
+- **68–70 `GET /people/{id}/invites`** — invites still waiting.
+- **73–76 `POST /people/{id}/invites`** — a new single-use link, valid 7 days.
+- **79–83 `POST .../invites/{token}/cancel`** — withdraw an invite; 404 if it is
+  not waiting any more.
+- **86–93 `GET /invites/{token}`** — no sign-in needed. Says whether the link
+  works, and if so whose name is on it, and nothing else.
+- **96–109 `POST /invites/{token}/accept`** — the person signed in with Google
+  from the link.
+  - **100–102** — an unusable invite is 410 with a plain reason.
+  - **103–104** — an account already linked to someone is 409; this also stops a
+    caregiver accepting their own invite.
+  - **105–106** — ask Clerk for the Google token. If Gmail read access was not
+    granted this refuses with a clear reason and the invite stays usable.
+  - **107–109** — link them, store the `person` role in Clerk, return `_me`.
+- **112–124 `POST /me/disconnect`** — only the person whose mail it is. Tells
+  Google to revoke the token (best effort), marks the mailbox `disconnected`
+  and stops scanning at once. Only a new invite reconnects it.
+
+---
+
+## `api/scanner.py`
+
+Reads each connected mailbox in the background and keeps only what the
+caregiver needs. Safe mail leaves an id and a verdict. Flagged mail keeps its
+text until its alert is resolved. The caregiver never browses the mailbox.
+
+- **21–23** — look back 14 days on first connection, re-check 120 seconds before
+  the last scan so nothing slips between two, and which states count as resolved.
+- **26–36 `handle_mail`** — one email in, then the retention rules. Returns
+  `withheld` (a one-time code: nothing stored), `safe`, or `flagged`. A flagged
+  report is tagged with the mailbox it came from (34–35) so it can be blanked
+  later.
+- **39–47 `forget`** — removes a safe email from memory entirely: its report,
+  decision and alert. Unless the alert holds other messages too, in which case
+  it stays.
+- **50–67 `blank_resolved`** — for mailbox mail whose alert is resolved or
+  closed, blank the text and sender (62–64), and the alert's summary (65–66).
+  An alert made from a message the caregiver pasted by hand is left alone.
+- **70–90 `scan_gmail`** — one pass over one Gmail mailbox.
+  - **72–76** — first scan: `newer_than:14d`; later: `after:<last check minus 120s>`.
+  - **79–85** — get the person's token from Clerk, list the ids, skip those
+    already seen, read the rest, record each verdict, then mark the mailbox
+    checked.
+  - **86–87** — Google refusing the token (401, 403) is a permanent failure.
+  - **88–89** — anything else, such as the network, is temporary and becomes a
+    problem only after 15 minutes.
+- **93–98 `scan_once`** — every Gmail mailbox not `disconnected`, then blank
+  what is resolved.
+- **101–109 `forwarded_handler`** — the same rules for the server's own IMAP
+  mailbox, recording a verdict per email under a hash of its text. With nobody
+  looked after yet it behaves as before.
+- **112–119 `note_forwarded`** — record whether the last IMAP check worked.
+- **122–139 `start_scanning`** — without `CLERK_SECRET_KEY` do nothing, since
+  tokens come from Clerk. Otherwise a background thread scans every
+  `SCAN_SECONDS` (default 60) and never stops on an error.
+
+Not yet run against a real Gmail account: the tests use stand-ins for Clerk and
+Gmail.
 
 ---
 
