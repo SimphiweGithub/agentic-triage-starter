@@ -6,8 +6,10 @@ OTP_PATTERN = re.compile(r"\b(otp|one[- ]time (?:pin|password|passcode)|verifica
 # A message that hands over a secret: "your password is ...", "recovery code", "login details". A scam that asks
 # the reader to "confirm your password" does not match, so it is still analysed.
 SECRET_PATTERN = re.compile(r"\b((password|passcode|pin|username|user name|code)\s*(is|:|=)|(recovery|reset|backup|access|activation) codes?"
-                            r"|temporary password|login details|log ?in details)\b", re.I)
+                            r"|(code|pin)\s*#?\s*\d{4,8}|temporary password|login details|log ?in details)\b", re.I)
 ACCOUNT_PATTERN = re.compile(r"(?<![+\d])(?!0\d{9}\b)\d{9,19}\b")
+# Numbers written in groups of four, such as card numbers and prepaid electricity tokens: "4111 1111 1111 1111".
+GROUPED_PATTERN = re.compile(r"(?<!\d)(?:\d{4}[ -]){3,}\d{1,4}(?!\d)")
 AMOUNT_PATTERN = re.compile(r"\bR\s?(\d{1,3}(?:[ ,]\d{3})+|\d+)(\.\d{2})?")
 URL_PATTERN = re.compile(r"(?:https?://|www\.)([a-z0-9.-]+\.[a-z]{2,})", re.I)
 EMAIL_PATTERN = re.compile(r"[\w.+-]+@([a-z0-9.-]+\.[a-z]{2,})", re.I)
@@ -24,8 +26,8 @@ def is_one_time_code(text: str) -> bool:
 
 
 def redact(text: str) -> str:
-    """Mask long digit runs (account and card numbers). Phone numbers are kept as evidence."""
-    return ACCOUNT_PATTERN.sub("[number withheld]", text or "")
+    """Mask account numbers, card numbers and tokens. Phone numbers are kept as evidence."""
+    return ACCOUNT_PATTERN.sub("[number withheld]", GROUPED_PATTERN.sub("[number withheld]", text or ""))
 
 
 def domain_of(value: str) -> str:

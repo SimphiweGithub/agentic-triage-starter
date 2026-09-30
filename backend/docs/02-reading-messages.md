@@ -15,7 +15,7 @@ These files only pattern-match it.
 is a pattern for finding text.
 **Line 3** — `Any` is a type hint meaning "any type".
 
-### The patterns (lines 5–18)
+### The patterns (lines 5–20)
 
 `re.compile(...)` builds a pattern once so it can be reused. `re.I` means
 "ignore upper and lower case". `\b` means "edge of a word". `\d` means "a digit".
@@ -25,35 +25,41 @@ is a pattern for finding text.
   Used to recognise messages that carry login or payment codes.
 - **Lines 8–9 `SECRET_PATTERN`** — messages that hand over a secret:
   `password is`, `pin:`, `username =`, `code is`, `recovery code`, `reset
-  code`, `backup codes`, `temporary password`, `login details`. The comment
+  code`, `backup codes`, `temporary password`, `login details`, and a code or PIN
+  followed by four to eight digits (`use code 53867`). That last part was
+  added after the phone app's first real sync let a login code through;
+  promotion codes with letters, such as `SAVE20`, are still let through. The comment
   above it (lines 6–7) records the one boundary that matters: a scam saying
   "confirm your password" does not match, because it asks for a secret
   instead of handing one over, so it is still analysed.
+- **Line 14 `GROUPED_PATTERN`** — numbers written in groups of four: card
+  numbers and prepaid electricity tokens (`3916 2010 5929 9797`). Also found
+  on the first real sync. Phone numbers are grouped in threes, so they are kept.
 - **Line 10 `ACCOUNT_PATTERN`** — matches a run of 9 to 19 digits: account and
   card numbers. It has two guards:
   - `(?<![+\d])` — "not preceded by a plus sign or a digit". This stops it
     matching inside `+27821234567`.
   - `(?!0\d{9}\b)` — "not a zero followed by exactly nine digits". This stops
     it matching a local phone number such as `0821234567`.
-- **Line 11 `AMOUNT_PATTERN`** — matches a rand amount: the letter `R`, an
+- **Line 13 `AMOUNT_PATTERN`** — matches a rand amount: the letter `R`, an
   optional space, then either digits grouped in thousands (`1 250` or `1,250`)
   or plain digits, then optional cents. The brackets capture two groups: the
   whole rands and the cents.
-- **Line 12 `URL_PATTERN`** — matches a link starting with `http://`, `https://`
+- **Line 14 `URL_PATTERN`** — matches a link starting with `http://`, `https://`
   or `www.`, and captures the domain.
-- **Line 13 `EMAIL_PATTERN`** — matches an email address and captures the domain
+- **Line 15 `EMAIL_PATTERN`** — matches an email address and captures the domain
   after the `@`.
-- **Line 14 `PHONE_PATTERN`** — matches a South African number starting `+27` or
+- **Line 16 `PHONE_PATTERN`** — matches a South African number starting `+27` or
   `0`, with optional spaces or dashes, not touching other digits on either side.
-- **Line 15 `REFERENCE_PATTERN`** — matches `ref` or `reference`, optional
+- **Line 17 `REFERENCE_PATTERN`** — matches `ref` or `reference`, optional
   punctuation, then captures one to four letters followed by three or more
   digits, such as `TC8841`.
-- **Line 16 `MANDATE_PATTERN`** — phrases that mean a company is *asking* to
+- **Line 18 `MANDATE_PATTERN`** — phrases that mean a company is *asking* to
   set up a debit: `mandate registered`, `mandate request`, `new mandate`,
   `debit order approval`, `debit order request`, `approve this debit`. Nothing
   has been taken yet.
-- **Line 17 `DEBIT_PATTERN`** — words that mean money left the account.
-- **Line 18 `MERCHANT_PATTERN`** — after `to`, `from`, `by` or `at`, captures a
+- **Line 19 `DEBIT_PATTERN`** — words that mean money left the account.
+- **Line 20 `MERCHANT_PATTERN`** — after `to`, `from`, `by` or `at`, captures a
   name that starts with a capital letter. The `(?=...)` at the end is a
   lookahead: the name stops just before `ref`, `on`, `for`, `acc`, a
   punctuation mark, or the end of the text. The `?` after `{2,40}` makes it
@@ -62,59 +68,60 @@ is a pattern for finding text.
 These patterns are heuristics. Real bank messages vary, and a pattern that
 misses a format gives an empty merchant, not a crash.
 
-### `is_one_time_code` (lines 21–23)
+### `is_one_time_code` (lines 23–25)
 
 Returns `True` if the text matches `OTP_PATTERN` or `SECRET_PATTERN`. `text or ""` turns `None`
 into an empty string so the search never fails. Such messages are never stored.
 
-### `redact` (lines 26–28)
+### `redact` (lines 28–30)
 
-`ACCOUNT_PATTERN.sub(...)` replaces every match with `[number withheld]`.
+Grouped numbers are masked first, then long digit runs; both become
+`[number withheld]`.
 Phone numbers survive because of the two guards on line 10; they are evidence.
 
-### `domain_of` (lines 31–34)
+### `domain_of` (lines 33–36)
 
-- **Line 33** — looks for an email address first, then a link. `a or b` returns
+- **Line 35** — looks for an email address first, then a link. `a or b` returns
   `a` if it found something, otherwise `b`.
-- **Line 34** — `match.group(1)` is the captured domain. It is lower-cased and
+- **Line 36** — `match.group(1)` is the captured domain. It is lower-cased and
   a leading `www.` is removed, so `WWW.Scam.example` and `scam.example` compare
   equal. Returns an empty string if nothing matched.
 
-### `normalise_name` (lines 37–38)
+### `normalise_name` (lines 39–40)
 
 Lower-cases the name, keeps only letters and digits, and joins the pieces with
 single spaces. `"TECHCARE  Support!"` becomes `"techcare support"`. This is how
 two spellings of one merchant are compared.
 
-### `extract_signals` (lines 41–69)
+### `extract_signals` (lines 43–71)
 
 Takes the message `text` and its `metadata`, and returns a dictionary called
 the **signals**. This dictionary is what the rest of the domain reasons about.
 
-- **Line 42** — guard against `None`.
-- **Line 43** — `amount_match` is the first rand amount found, or `None`.
-- **Line 44** — `amount` as a number. `group(1)` is the rands with spaces and
+- **Line 44** — guard against `None`.
+- **Line 45** — `amount_match` is the first rand amount found, or `None`.
+- **Line 46** — `amount` as a number. `group(1)` is the rands with spaces and
   commas removed; `group(2)` is the cents or nothing. `float(...)` converts
   the joined text. If there was no match, `amount` is `None`.
-- **Line 45** — `is_mandate` is true when the text matches `MANDATE_PATTERN`.
-- **Line 46** — `is_debit` is true only when there is a debit word **and** an
+- **Line 47** — `is_mandate` is true when the text matches `MANDATE_PATTERN`.
+- **Line 48** — `is_debit` is true only when there is a debit word **and** an
   amount, and the message is **not** a mandate request. A request mentions
   "debit order" too, so the mandate check has to win.
-- **Line 47** — the merchant pattern is tried for debits and mandate requests.
-- **Line 48** — `merchant` is the captured name for a debit. For other
+- **Line 49** — the merchant pattern is tried for debits and mandate requests.
+- **Line 50** — `merchant` is the captured name for a debit. For other
   messages it is the email's display name (`sender_name`), or empty.
-- **Line 49** — `reference` is the payment-reference match, or `None`.
-- **Line 50** — `sender` is the sender address in lower case.
-- **Line 51** — `links` is a list of `(label, target)` pairs from an HTML
+- **Line 51** — `reference` is the payment-reference match, or `None`.
+- **Line 52** — `sender` is the sender address in lower case.
+- **Line 53** — `links` is a list of `(label, target)` pairs from an HTML
   email: what the link shows, and where it really goes.
-- **Line 52** — `domains` starts with the sender's domain and the reply-to domain.
-- **Line 53** — adds every domain found in links written in the text.
-- **Line 54** — adds the real target domain of every HTML link.
-- **Line 56** — `bait` is the set of domains that appear only as a link's
+- **Line 54** — `domains` starts with the sender's domain and the reply-to domain.
+- **Line 55** — adds every domain found in links written in the text.
+- **Line 56** — adds the real target domain of every HTML link.
+- **Line 58** — `bait` is the set of domains that appear only as a link's
   label while the link goes somewhere else, for example a link that shows
   `www.yourbank.example` but leads to the scammer. Those belong to the victim
   brand, not the sender, so they must not be treated as the sender's.
-- **Lines 57–69** — the returned dictionary:
+- **Lines 59–71** — the returned dictionary:
   - `kind` — `"mandate"`, `"debit"` or `"message"`.
   - `merchant` — normalised name.
   - `amount` — number or `None`.

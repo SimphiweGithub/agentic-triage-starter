@@ -764,6 +764,14 @@ class CollectionTests(unittest.TestCase):
         for secret in ("Your password is Kx81!pq", "Use recovery code 4821-9921 to sign in", "Your login details: user ST10451674"):
             self.assertIsNotNone(withhold({"payload": secret}))
         self.assertIsNone(withhold({"payload": "Urgent: confirm your password at http://bank-secure.example"}))
+        self.assertIsNotNone(withhold({"payload": "Steam: Use code 53867 to add this phone to your account"}))
+        self.assertIsNone(withhold({"payload": "Use code SAVE20 for 20% off"}))
+
+    def test_card_numbers_and_prepaid_tokens_are_masked(self):
+        masked = redact("Token 3916 2010 5929 9797 0998 and card 4111-1111-1111-1111, query 0860 288 673")
+        self.assertNotIn("3916", masked)
+        self.assertNotIn("4111", masked)
+        self.assertIn("0860 288 673", masked)
 
     def test_identifiers_and_names_are_masked_for_labelling(self):
         masked = mask_for_labelling("Hi Simphiwe, order #OD-4471923 for ST10451674 (st10451674@myemeris.example) R1500.00, call 0105550142",
