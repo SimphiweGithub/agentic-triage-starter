@@ -17,10 +17,10 @@ FORBIDDEN_ACTIONS: set[ActionType] = set()
 # These act on the person's bank relationship, so the caregiver approves every one.
 HIGH_IMPACT_ACTIONS: set[ActionType] = {ActionType.DRAFT_DISPUTE, ActionType.BLOCK_OPERATOR}
 # Reversible and low consequence: may run without a human when confidence is high enough.
-SAFE_ACTIONS: set[ActionType] = {ActionType.RECORD_ONLY, ActionType.WARN_PERSON, ActionType.FLAG_SENDER, ActionType.WITHDRAW}
+SAFE_ACTIONS: set[ActionType] = {ActionType.RECORD_ONLY, ActionType.WARN_PERSON, ActionType.ADVISE_DECLINE, ActionType.FLAG_SENDER, ActionType.WITHDRAW}
 ALLOWED_SERVICE_ACTIONS: dict[ServiceDomain, set[ActionType]] = {
     ServiceDomain.UNSPECIFIED: {ActionType.RECORD_ONLY},
-    ServiceDomain.PERSON: {ActionType.WARN_PERSON},
+    ServiceDomain.PERSON: {ActionType.WARN_PERSON, ActionType.ADVISE_DECLINE},
     ServiceDomain.MAIL_FILTER: {ActionType.FLAG_SENDER},
     ServiceDomain.BANK: {ActionType.DRAFT_DISPUTE, ActionType.BLOCK_OPERATOR, ActionType.WITHDRAW},
 }
@@ -67,6 +67,11 @@ YOUNG_DAYS = 90
 JUMP_RATIO = 2.0
 # A shortened merchant name must be at least this similar to a registered name to count as the same company.
 NAME_SIMILARITY = 0.6
+
+# An unauthorised debit can be disputed with the bank for this many days after it runs.
+DISPUTE_WINDOW_DAYS = 60
+# With no guardian enrolled, a person who confirms a high-risk sender must wait this long before it takes effect.
+COOLING_OFF_SECONDS = 24 * 60 * 60
 
 # Shared mail providers. Flagging one of these domains would block legitimate senders,
 # so the mail filter refuses and the agent must narrow the flag to a single address.

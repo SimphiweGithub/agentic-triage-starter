@@ -2,6 +2,7 @@ import os
 
 os.environ["KINGUARD_SKIP_ENV_FILE"] = "1"  # tests never read real keys or switches from .env
 
+from datetime import timedelta
 import json
 import tempfile
 import unittest
@@ -536,6 +537,88 @@ class ApiContractTests(unittest.TestCase):
     def test_cross_origin_requests_are_refused_unless_configured(self):
         response = self.client.get("/api/health", headers={"Origin": "http://localhost:5173"})
         self.assertNotIn("access-control-allow-origin", response.headers)
+
+
+MANDATE = "Nedbank: Mandate registered for R189.00 by TECHCARE SUPPORT. Reply within 24h to reject."
+DEBIT = "YourBank: Debit order of R349.00 to TECHCARE ref TCS8841 from acc 1234567890 on 02 Oct."
+
+
+def message(report_id: str, text: str, timestamp: str = "2026-10-02T06:00:00") -> RawInputReport:
+    return parse_record({"report_id": report_id, "timestamp": timestamp, "source": "sms", "payload": text, "metadata": {"sender": "bank"}})
+
+
+class MandateDeadlineAndSoloTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = TriageRuntime()
+
+    def test_mandate_request_from_an_unverified_company_is_advised_against(self):
+        report = message("M1", MANDATE)
+        self.assertEqual(report.metadata["signals"]["kind"], "mandate")
+        self.assertEqual(report.metadata["signals"]["merchant"], "techcare support")
+        decision = self.runtime.process(report)
+        self.assertEqual(decision.proposed_action.type, ActionType.ADVISE_DECLINE)
+        self.assertEqual(decision.action_outcome, ActionOutcome.EXECUTED)
+        self.assertFalse(decision.requires_human_approval)
+        self.assertIn("do not approve", WORLD.outbox[0]["message"])
+
+    def test_mandate_request_from_an_established_company_is_left_to_the_person(self):
+        decision = self.runtime.process(message("M1", "Capitec: New debit order approval request from STREAMBOX."))
+        self.assertIsNone(decision.proposed_action)
+        self.assertEqual(WORLD.outbox, [])
+
+    def test_a_debit_that_has_run_is_not_mistaken_for_a_mandate_request(self):
+        self.assertEqual(message("D1", DEBIT).metadata["signals"]["kind"], "debit")
+
+    def test_dispute_carries_its_deadline_and_the_steps_to_lodge_it(self):
+        decision = self.runtime.process(message("D1", DEBIT))
+        self.assertEqual(decision.proposed_action.details["dispute_by"], "2026-12-01")
+        self.assertIn("Shall we prepare a dispute", decision.proposed_action.details["ask"])
+        self.runtime.decide_review(decision.review_id, approved=True)
+        dispute = WORLD.disputes["2026/118822/07"]
+        self.assertEqual(dispute["dispute_by"], "2026-12-01")
+        self.assertEqual(len(dispute["steps"]), 4)
+
+    def test_without_a_guardian_the_person_is_asked_instead(self):
+        with_guardian = self.runtime.process(message("D1", DEBIT))
+        self.assertEqual(self.runtime.reviews[with_guardian.review_id].audience, "CAREGIVER")
+        self.runtime.reset()
+        WORLD.guardian = False
+        solo = self.runtime.process(message("D1", DEBIT))
+        review = self.runtime.reviews[solo.review_id]
+        self.assertEqual(review.audience, "PERSON")
+        self.assertIsNone(review.not_before)
+        self.runtime.decide_review(solo.review_id, approved=True)
+        self.assertIn("2026/118822/07", WORLD.disputes)
+
+    def test_solo_override_of_a_high_risk_sender_needs_a_cooling_off(self):
+        WORLD.guardian = False
+        lure = self.runtime.process(parse_record(kinguard_rows()["K01"]))
+        answer = self.runtime.process(RawInputReport(report_id="F1", source="person", payload="legitimate",
+                                                     metadata={"incident_id": lure.incident_id, "feedback": "legitimate"}))
+        review = self.runtime.reviews[answer.review_id]
+        self.assertEqual(review.audience, "PERSON")
+        self.assertIsNotNone(review.not_before)
+        with self.assertRaises(ValueError):
+            self.runtime.decide_review(answer.review_id, approved=True)
+        self.assertIn("techcare-help.example", WORLD.flagged)
+        later = self.runtime.now() + timedelta(hours=25)
+        self.runtime.now = lambda: later
+        self.runtime.decide_review(answer.review_id, approved=True)
+        self.assertNotIn("techcare-help.example", WORLD.flagged)
+
+    def test_guardian_setting_and_audience_filter_over_the_api(self):
+        client = TestClient(app)
+        client.post("/api/reset")
+        self.assertTrue(client.get("/api/health").json()["guardian"])
+        self.assertEqual(client.post("/api/settings/guardian", json={"enrolled": False}).json(), {"guardian": False})
+        sent = client.post("/api/intake/share", json={"text": DEBIT, "sender": "YourBank"}).json()
+        self.assertEqual([item["review_id"] for item in client.get("/api/reviews", params={"audience": "PERSON"}).json()], [sent["review_id"]])
+        self.assertEqual(client.get("/api/reviews", params={"audience": "CAREGIVER"}).json(), [])
+        lure = client.post("/api/intake/email", json={"content": (ROOT / "samples" / "lure.eml").read_text(encoding="utf-8")}).json()
+        answer = client.post(f"/api/incidents/{lure['incident_id']}/feedback", json={"legitimate": True}).json()
+        self.assertEqual(client.post(f"/api/reviews/{answer['review_id']}/decision", json={"approved": True}).status_code, 409)
+        client.post("/api/reset")
+        self.assertTrue(client.get("/api/health").json()["guardian"])
 
 
 if __name__ == "__main__":

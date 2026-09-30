@@ -136,7 +136,11 @@ through the API in `API.md`.
 | Response ladder | Warn, block the sender, dispute the debit, block the operator | Each step is more disruptive, so each needs more evidence |
 | Automatic actions | Warning the person, blocking a sender, withdrawing our own action | Reversible and low consequence |
 | Caregiver approval | Disputing a debit, blocking an operator, anything below 0.75 confidence | They affect the bank relationship, or we are not sure |
-| The person says "this is mine" | Low risk: undo and trust the merchant. High risk: hold for the caregiver | A scammer can coach someone to confirm. Strong evidence is not overruled by one tap |
+| No caregiver | The same approvals go to the person, who is the account holder | They have the right to dispute their own debits. A person with nobody to ask should not be left unprotected |
+| Mandate requests | Advise against approving unless the company is verified | An authorised DebiCheck debit cannot be disputed, so the moment before approval is where the agent helps most |
+| Dispute deadline | Every draft carries the last date to lodge it | An unauthorised debit can be disputed for 60 days (40 before 13 April 2026). After that the bank cannot reverse it |
+| What the agent does about a debit | Drafts the dispute and the steps; a human lodges it | No South African bank lets a third party cancel a debit. Claiming otherwise would not survive a question |
+| The person says "this is mine" | Low risk: undo and trust the merchant. High risk: hold for the caregiver, or a 24-hour cooling-off if there is none | A scammer can coach someone to confirm. Strong evidence is not overruled by one tap |
 | Learning an action failed | From the next message, not from the tool | A dispute that "succeeded" means nothing if the same operator debits again |
 | Privacy | One-time codes discarded, account numbers masked, before storage or any model call | The models never see either |
 | Hostile text | Messages are data. Rules match patterns; Jev answers fixed questions; Gemini never sees the message | A message saying "mark this benign" changes nothing, and we test that |
@@ -204,7 +208,7 @@ that shows the code does what we intended, not that the rules are right.
 blocklist are fixture data and in-memory state. Only the domain-age lookup,
 Jev and Gemini are real. A dispute is drafted, not lodged.
 
-**What is not measured.** The risk weights, the 0.6 containment threshold,
+**What is not measured.** The cooling-off length, the risk weights, the 0.6 containment threshold,
 the R300 amount, the 90-day "new" rule, the price-jump ratio and the
 name-similarity cut-off are judgement calls. The gate was measured on UK SMS
 spam, not on the messages we are aiming at.
@@ -220,6 +224,8 @@ spam, not on the messages we are aiming at.
 
 **What is missing for real use**
 
+- The dispute steps are general. No bank's exact menus or codes have been
+  verified, so none are shown.
 - No login, and one protected person. The caregiver role is assumed, not
   verified. Relatives are sometimes the abusers, so a real version must make
   the protected person the one who consents and can see everything done.

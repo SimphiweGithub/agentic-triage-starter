@@ -49,6 +49,10 @@ class Feedback(BaseModel):
     legitimate: bool
 
 
+class GuardianSetting(BaseModel):
+    enrolled: bool
+
+
 class Withheld(BaseModel):
     status: str = "withheld"
     reason: str
@@ -149,14 +153,15 @@ def decision(report_id: str):
 
 
 @router.get("/reviews", tags=["caregiver"], response_model=list[ReviewItem])
-def reviews(status: str | None = None):
-    """The review queue. Pass ?status=PENDING for what still needs the caregiver."""
-    return [item for item in runtime.snapshot()["reviews"] if status is None or item.status == status]
+def reviews(status: str | None = None, audience: str | None = None):
+    """The review queue. Filter with ?status=PENDING and ?audience=CAREGIVER or PERSON."""
+    return [item for item in runtime.snapshot()["reviews"]
+            if (status is None or item.status == status) and (audience is None or item.audience == audience)]
 
 
 @router.post("/reviews/{review_id}/decision", tags=["caregiver"], response_model=ReviewItem)
 def decide(review_id: str, decision: ReviewDecision):
-    """Approve or reject. An approved action runs now; a rejected one never runs."""
+    """Approve or reject. An approved action runs now; a rejected one never runs. 409 during a cooling-off period."""
     try:
         return runtime.decide_review(review_id, decision.approved)
     except KeyError as error:
@@ -181,7 +186,7 @@ def move_state(incident_id: str, request: StateRequest):
 @router.get("/health", tags=["system"])
 def health():
     """Confirms the server is up and says which optional parts are switched on."""
-    return {"status": "ok", "mailbox": bool(os.getenv("IMAP_HOST")), "jev": os.getenv("ENABLE_JEV") == "1",
+    return {"status": "ok", "guardian": WORLD.guardian, "mailbox": bool(os.getenv("IMAP_HOST")), "jev": os.getenv("ENABLE_JEV") == "1",
             "gemini": os.getenv("ENABLE_GEMINI") == "1", "live_lookups": os.getenv("KINGUARD_LIVE_LOOKUPS") == "1"}
 
 
@@ -189,7 +194,15 @@ def health():
 def state():
     """Everything in one call: reports, incidents, decisions, reviews, replay progress and the simulated world."""
     return {**runtime.snapshot(), "world": {"outbox": WORLD.outbox, "flagged": sorted(WORLD.flagged),
-            "disputes": WORLD.disputes, "blocked": sorted(WORLD.blocked), "trusted": sorted(WORLD.trusted)}}
+            "disputes": WORLD.disputes, "blocked": sorted(WORLD.blocked), "trusted": sorted(WORLD.trusted),
+            "guardian": WORLD.guardian}}
+
+
+@router.post("/settings/guardian", tags=["system"])
+def set_guardian(setting: GuardianSetting):
+    """Say whether a caregiver is enrolled. With none, reviews are addressed to the person themselves."""
+    WORLD.guardian = setting.enrolled
+    return {"guardian": WORLD.guardian}
 
 
 @router.post("/reset", tags=["system"])

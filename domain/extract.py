@@ -9,6 +9,7 @@ URL_PATTERN = re.compile(r"(?:https?://|www\.)([a-z0-9.-]+\.[a-z]{2,})", re.I)
 EMAIL_PATTERN = re.compile(r"[\w.+-]+@([a-z0-9.-]+\.[a-z]{2,})", re.I)
 PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+27|0)[\s-]?\d{2}[\s-]?\d{3}[\s-]?\d{4}(?!\d)")
 REFERENCE_PATTERN = re.compile(r"\bref(?:erence)?[\s:#.]*([A-Z]{1,4}\d{3,})", re.I)
+MANDATE_PATTERN = re.compile(r"\b(mandate (registered|request\w*)|new mandate|debit order (approval|request)|approve (this|the|a) (debit|mandate))\b", re.I)
 DEBIT_PATTERN = re.compile(r"\b(debit order|debit|deducted|charged|recurring payment|subscription payment)\b", re.I)
 MERCHANT_PATTERN = re.compile(r"\b(?:to|from|by|at)\s+([A-Z][A-Za-z0-9&' -]{2,40}?)(?=\s+(?:ref|reference|on|for|acc|account)\b|[.,;:]|$)")
 
@@ -37,8 +38,9 @@ def extract_signals(text: str, metadata: dict[str, Any]) -> dict[str, Any]:
     text = text or ""
     amount_match = AMOUNT_PATTERN.search(text)
     amount = float(amount_match.group(1).replace(" ", "").replace(",", "") + (amount_match.group(2) or "")) if amount_match else None
-    is_debit = bool(DEBIT_PATTERN.search(text)) and amount is not None
-    merchant_match = MERCHANT_PATTERN.search(text) if is_debit else None
+    is_mandate = bool(MANDATE_PATTERN.search(text))  # a request to set up a debit, not a debit that has run
+    is_debit = bool(DEBIT_PATTERN.search(text)) and amount is not None and not is_mandate
+    merchant_match = MERCHANT_PATTERN.search(text) if is_debit or is_mandate else None
     merchant = merchant_match.group(1) if merchant_match else str(metadata.get("sender_name") or "")
     reference = REFERENCE_PATTERN.search(text)
     sender = str(metadata.get("sender") or "").lower()
@@ -49,7 +51,7 @@ def extract_signals(text: str, metadata: dict[str, Any]) -> dict[str, Any]:
     # A link label that shows a different address from its target is bait, not one of the sender's domains.
     bait = {domain_of(label) for label, target in links if domain_of(label) != domain_of(target)}
     return {
-        "kind": "debit" if is_debit else "message",
+        "kind": "mandate" if is_mandate else "debit" if is_debit else "message",
         "merchant": normalise_name(merchant),
         "amount": amount,
         "reference": reference.group(1).upper() if reference else "",

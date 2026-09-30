@@ -48,6 +48,12 @@ This project is the backend only. The front end is built separately against `API
 | K08 subscription price jump | Flagged for the caregiver; withdrawn and the merchant trusted if the person confirms it |
 | Unreadable line | Still gets a decision, routed to a human |
 
+Also built, outside that file:
+
+- **Mandate requests.** A company asking to set up a debit is advised against unless it can be verified, because an approved mandate is hard to dispute.
+- **Dispute deadline.** Each drafted dispute carries the last date to lodge it (60 days) and the steps.
+- **No guardian.** With `KINGUARD_GUARDIAN=0`, or through `POST /api/settings/guardian`, approvals go to the person themselves, and confirming a high-risk sender needs a 24-hour cooling-off.
+
 ## Line-by-line walkthrough
 
 `docs/01` to `docs/05` explain every backend file, line by line.

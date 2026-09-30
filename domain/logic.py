@@ -1,5 +1,5 @@
 """KinGuard decisions: how a message is read, linked to an incident, and assessed."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from typing import Any
 
@@ -8,7 +8,8 @@ from domain.extract import extract_signals, is_one_time_code, redact
 from domain.gate import ask_jev, gate
 from domain.investigate import investigate
 from domain.language import write_person_message
-from domain.policy import CONTAIN_THRESHOLD, GATE_THRESHOLD, HIGH_AMOUNT, PROTECTED_DOMAINS, REVIEW_HOLD_SEVERITIES
+from domain.policy import (CONTAIN_THRESHOLD, COOLING_OFF_SECONDS, DISPUTE_WINDOW_DAYS, GATE_THRESHOLD, HIGH_AMOUNT,
+                           PROTECTED_DOMAINS, REVIEW_HOLD_SEVERITIES, YOUNG_DAYS)
 from domain.schemas import ActionProposal, Assessment, IncidentRecord, RawInputReport
 from domain.tools import WORLD, identify_operator
 
@@ -92,15 +93,25 @@ def risk_persists(incident: IncidentRecord, assessment: Assessment) -> bool:
     return assessment.severity in REVIEW_HOLD_SEVERITIES
 
 
+def review_audience() -> str:
+    """Who a review is addressed to: the caregiver, or the person themselves when no guardian is enrolled."""
+    return "CAREGIVER" if WORLD.guardian else "PERSON"
+
+
 def _withdrawal(incident: IncidentRecord) -> Assessment:
     """The person says the charge or sender is legitimate: undo our actions, unless the evidence was strong."""
     strong = incident.severity in REVIEW_HOLD_SEVERITIES
     action = ActionProposal(type=ActionType.WITHDRAW, service=ServiceDomain.BANK,
                             details={"merchant": incident.labels.get("merchant", "")})
-    if strong:
+    if strong and WORLD.guardian:
         return Assessment(severity=incident.severity, confidence=0.5, requested_state=incident.status, proposed_action=action,
                           rationale="The person says this is legitimate, but the evidence against it was strong.",
                           review_reason="Person confirmed a high-risk sender as legitimate; check for coercion")
+    if strong:  # nobody else to ask, so slow the decision down instead
+        return Assessment(severity=incident.severity, confidence=0.5, requested_state=incident.status, proposed_action=action,
+                          rationale="The person says this is legitimate, but the evidence against it was strong and no guardian is enrolled.",
+                          review_reason="Person confirmed a high-risk sender as legitimate; cooling-off before it takes effect",
+                          review_delay_seconds=COOLING_OFF_SECONDS)
     return Assessment(severity=SeverityLevel.LOW, confidence=0.95, requested_state=IncidentState.RESOLVED, proposed_action=action,
                       rationale="The person confirmed this is legitimate; withdrawing our actions and trusting the merchant.",
                       labels={"threat": ThreatDomain.BENIGN.value})
@@ -121,11 +132,11 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     if report.metadata.get("feedback") == "legitimate":
         return _withdrawal(incident)
 
-    is_debit = signals["kind"] == "debit"
+    is_debit, is_mandate = signals["kind"] == "debit", signals["kind"] == "mandate"
+    when = parse_timestamp(report.timestamp) or datetime.now(timezone.utc)
     verdict = gate(report.payload, signals, ask_jev if os.getenv("ENABLE_JEV") == "1" else None)
     findings, company = [], None
-    if is_debit or verdict.score >= GATE_THRESHOLD:
-        when = parse_timestamp(report.timestamp) or datetime.now(timezone.utc)
+    if is_debit or is_mandate or verdict.score >= GATE_THRESHOLD:
         findings, company = investigate(signals, when)
     if is_debit:
         WORLD.debits.setdefault(signals["merchant"], []).append(signals["amount"])
@@ -134,9 +145,14 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     trusted = signals["merchant"] in WORLD.trusted and not price_jump
     risk = 0.0 if trusted else min(1.0, verdict.score + sum(finding.weight for finding in findings))
     evidence = verdict.reasons + [finding.note for finding in findings if finding.weight > 0]
+    established = bool(company) and company["age_days"] >= YOUNG_DAYS
+    if is_mandate and not trusted and not (established and verdict.score < GATE_THRESHOLD):
+        # An approved mandate is hard to dispute later, so a request is advised against unless the company checks out.
+        risk = max(risk, GATE_THRESHOLD)
+        evidence.append("a new debit mandate is being requested by a company not verified as established")
     threat = verdict.threat
     if threat is ThreatDomain.BENIGN and risk >= GATE_THRESHOLD:  # the wording was clean but the tools found risk
-        threat = ThreatDomain.GREY_MARKET_SUBSCRIPTION if is_debit else ThreatDomain.UNKNOWN
+        threat = ThreatDomain.GREY_MARKET_SUBSCRIPTION if is_debit or is_mandate else ThreatDomain.UNKNOWN
     labels = {"threat": threat.value, "merchant": signals["merchant"], "reg_no": (company or {}).get("reg_no", "")}
     labels = {name: value for name, value in labels.items() if value}
     stay = IncidentState.TRIAGED if incident.status is IncidentState.NEW else incident.status
@@ -156,21 +172,32 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     who = signals["merchant"] or (signals["sender"] if shared_provider else signals["sender_domain"]) or "an unknown sender"
     severity, target_state = SeverityLevel.MEDIUM, IncidentState.CONTAINED
 
-    if is_debit and disputed:
+    amount_text = f"R{signals['amount']:.2f}" if signals["amount"] is not None else "an amount"
+    if is_mandate:
+        target_state = IncidentState.INVESTIGATING
+        severity = SeverityLevel.HIGH if (signals["amount"] or 0) >= HIGH_AMOUNT else SeverityLevel.MEDIUM
+        action = ActionProposal(type=ActionType.ADVISE_DECLINE, service=ServiceDomain.PERSON, details={
+            "merchant": signals["merchant"],
+            "message": f"A company called {who} is asking to take {amount_text} from your account. We could not confirm it is a trusted company. "
+                       "We suggest you do not approve it. Once approved, it is hard to reverse."})
+    elif is_debit and disputed:
         severity = SeverityLevel.HIGH
         rationale = "A debit arrived after the dispute was lodged, so the dispute did not stop this operator. " + rationale
         action = ActionProposal(type=ActionType.BLOCK_OPERATOR, service=ServiceDomain.BANK, details={
-            "merchant": signals["merchant"], "operator": signals.get("operator", "")})
+            "merchant": signals["merchant"], "operator": signals.get("operator", ""),
+            "ask": f"{who} has taken money again after we disputed it. Shall we ask your bank to refuse every debit from this operator?"})
     elif is_debit and company:
         severity = SeverityLevel.HIGH if signals["amount"] >= HIGH_AMOUNT else SeverityLevel.MEDIUM
         action = ActionProposal(type=ActionType.DRAFT_DISPUTE, service=ServiceDomain.BANK, details={
             "merchant": signals["merchant"], "company": company["name"], "reg_no": company["reg_no"],
-            "amount": signals["amount"], "reference": signals["reference"]})
+            "amount": signals["amount"], "reference": signals["reference"],
+            "dispute_by": (when + timedelta(days=DISPUTE_WINDOW_DAYS)).date().isoformat(),
+            "ask": f"{amount_text} was taken by {company['name']}, which we do not think you agreed to. Shall we prepare a dispute for your bank?"})
     elif is_debit:
         target_state = IncidentState.INVESTIGATING
         review_reason = review_reason or "Merchant could not be identified, so no dispute can be addressed"
         action = ActionProposal(type=ActionType.WARN_PERSON, service=ServiceDomain.PERSON, details={
-            "message": f"We noticed a debit of R{signals['amount']:.2f} to {who} that we could not verify. Your family contact has been asked to check it."})
+            "message": f"We noticed a debit of {amount_text} to {who} that we could not verify. Please check it before paying anything more."})
     elif risk >= CONTAIN_THRESHOLD:
         if threat in (ThreatDomain.TECH_SUPPORT_SCAM, ThreatDomain.IDENTITY_FARMING):
             severity = SeverityLevel.HIGH

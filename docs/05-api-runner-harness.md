@@ -32,7 +32,7 @@ The contract for the front end is in `API.md`. This section explains the code.
 **Line 18** — `runtime` is the single `TriageRuntime` for the whole server. All
 state lives in it, in memory; restarting the server clears it.
 
-### Request and response shapes (lines 21–59)
+### Request and response shapes (lines 21–63)
 
 Each class describes a JSON body. FastAPI rejects a request that does not
 fit, with error 422, before any of our code runs.
@@ -44,19 +44,20 @@ fit, with error 422, before any of our code runs.
 - `EmailUpload` — `content`: raw `.eml` text.
 - `SharedMessage` — `text` (at least one character), `sender`, `channel`.
 - `Feedback` — `legitimate`: true or false.
+- `GuardianSetting` — `enrolled`: true or false.
 - `Withheld` — the reply when a message is discarded: `status` and `reason`.
 - `PersonMessage` — one warning for the person: `incident_id` and `message`.
 
-### Helpers (lines 62–72)
+### Helpers (lines 66–76)
 
-- **62–63 `_now`** — the current UTC time as text.
-- **75–77 `take_in_email`** — one raw email in, one decision out. The API
+- **66–67 `_now`** — the current UTC time as text.
+- **79–81 `take_in_email`** — one raw email in, one decision out. The API
   route and the live mailbox both call it, so they cannot behave differently.
-- **66–72 `_take_in`** — the shared path for live intake:
-  - **68–70** — ask the domain whether the row must be withheld. If so, return
+- **70–76 `_take_in`** — the shared path for live intake:
+  - **72–74** — ask the domain whether the row must be withheld. If so, return
     a `Withheld` reply and store nothing.
-  - **71** — parse it safely.
-  - **72** — process it safely. A decision always comes back.
+  - **75** — parse it safely.
+  - **76** — process it safely. A decision always comes back.
 
 ### Endpoints
 
@@ -67,42 +68,43 @@ reply is sent.
 
 | Lines | Method and path | Group | What it does |
 |---|---|---|---|
-| 82–85 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
-| 88–91 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
-| 94–100 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
-| 105–108 | `GET /outbox` | person | The warnings written for the person |
-| 111–119 | `POST /incidents/{id}/feedback` | person | The person's own answer about an incident |
-| 124–127 | `GET /incidents` | caregiver | Every incident |
-| 130–140 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
-| 143–148 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
-| 151–154 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
-| 157–165 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
-| 168–176 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
-| 181–183 | `GET /health` | system | Confirms the server is up and reports which optional parts are on: mailbox, Jev, Gemini, live lookups |
-| 188–192 | `GET /state` | system | Everything in one call, plus the simulated world |
-| 195–199 | `POST /reset` | system | Empty everything |
-| 202–209 | `POST /replay` | system | Reset, then process a list of reports |
-| 212–220 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 223–227 | `POST /replay/step` | system | Process the next messages in the queue |
+| 86–89 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
+| 92–95 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
+| 98–104 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
+| 109–112 | `GET /outbox` | person | The warnings written for the person |
+| 115–123 | `POST /incidents/{id}/feedback` | person | The person's own answer about an incident |
+| 128–131 | `GET /incidents` | caregiver | Every incident |
+| 134–144 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
+| 147–152 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
+| 155–158 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
+| 162–170 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
+| 173–181 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
+| 186–188 | `GET /health` | system | Confirms the server is up and reports which optional parts are on: mailbox, Jev, Gemini, live lookups |
+| 193–197 | `GET /state` | system | Everything in one call, plus the simulated world |
+| 201–205 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
+| 208–212 | `POST /reset` | system | Empty everything |
+| 215–222 | `POST /replay` | system | Reset, then process a list of reports |
+| 225–233 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 236–240 | `POST /replay/step` | system | Process the next messages in the queue |
 
-**`feedback` in detail (111–119)**
-- **114–115** — unknown incident: error 404.
-- **116** — a sentence describing the answer.
-- **117–118** — the answer is wrapped as a `RawInputReport` with `source`
+**`feedback` in detail (115–123)**
+- **118–119** — unknown incident: error 404.
+- **120** — a sentence describing the answer.
+- **121–122** — the answer is wrapped as a `RawInputReport` with `source`
   `"person"`. Its metadata names the incident (so the correlator links it
   explicitly) and carries the `feedback` value.
-- **119** — it is processed like any other message. The person's answer is
+- **123** — it is processed like any other message. The person's answer is
   evidence that goes through the same policy; it is not a command.
 
-**`reviews` in detail (151–154)** — `status` is an optional query parameter.
-With `?status=PENDING` only reviews in that state are returned; with nothing,
-all of them.
+**`reviews` in detail (155–159)** — `status` and `audience` are optional query
+parameters. `?status=PENDING&audience=PERSON` returns what is waiting for the
+person themselves; with nothing, every review is returned.
 
-**`replay_load` in detail (212–220)**
-- **216** — strip an invisible marker from the start of the text, read the
+**`replay_load` in detail (225–233)**
+- **229** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **217–218** — an unsupported file type returns error 400.
-- **219** — parse every row safely and hand the list to the runtime's queue.
+- **230–231** — an unsupported file type returns error 400.
+- **232** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.
