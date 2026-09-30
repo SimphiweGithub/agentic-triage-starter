@@ -621,5 +621,55 @@ class MandateDeadlineAndSoloTests(unittest.TestCase):
         self.assertTrue(client.get("/api/health").json()["guardian"])
 
 
+class WhatsAppAndNewScamTests(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app)
+        self.client.post("/api/reset")
+
+    def tearDown(self):
+        self.client.post("/api/reset")
+
+    def test_relative_on_a_new_number_asking_for_money_is_flagged(self):
+        text = "Hi mom this is my new number, my phone was stolen. Please send R2000 to this account today."
+        verdict = gate(text, extract_signals(text, {}))
+        self.assertEqual(verdict.threat, ThreatDomain.IMPERSONATION)
+        self.assertGreaterEqual(verdict.score, 0.5)
+        honest = "This is my new number by the way."
+        self.assertLess(gate(honest, extract_signals(honest, {})).score, 0.3)
+
+    def test_advance_fee_wording_is_flagged(self):
+        text = "Your inheritance is ready for release once the clearance fee is paid."
+        self.assertEqual(gate(text, extract_signals(text, {})).threat, ThreatDomain.ADVANCE_FEE)
+
+    def test_whatsapp_webhook_takes_in_the_message_and_never_replies(self):
+        body = "From=whatsapp%3A%2B27825550199&Body=Hi+mom+this+is+my+new+number.+Please+send+R2000+today."
+        response = self.client.post("/api/intake/whatsapp", content=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "<Response></Response>")
+        state = self.client.get("/api/state").json()
+        self.assertEqual(state["reports"][0]["source"], "whatsapp")
+        self.assertEqual(state["reports"][0]["metadata"]["sender"], "+27825550199")
+        self.assertEqual(state["incidents"][0]["labels"]["threat"], "IMPERSONATION")
+        empty = self.client.post("/api/intake/whatsapp", content="From=whatsapp%3A%2B27825550199&Body=", headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(empty.status_code, 200)
+        self.assertEqual(len(self.client.get("/api/state").json()["reports"]), 1)
+
+    def test_guardian_brief_is_plain_and_links_to_whatsapp(self):
+        self.assertEqual(self.client.get("/api/guardian/briefs").json(), [])
+        sent = self.client.post("/api/intake/share", json={"text": DEBIT, "sender": "YourBank"}).json()
+        with patch.dict("os.environ", {"GUARDIAN_WHATSAPP": "+27 82 123 4567"}):
+            briefs = self.client.get("/api/guardian/briefs").json()
+        self.assertEqual(len(briefs), 1)
+        self.assertEqual(briefs[0]["review_id"], sent["review_id"])
+        self.assertIn("Shall we prepare a dispute", briefs[0]["text"])
+        self.assertIn("lodged by", briefs[0]["text"])
+        self.assertTrue(briefs[0]["whatsapp_link"].startswith("https://wa.me/27821234567?text=KinGuard"))
+        self.client.post(f"/api/reviews/{sent['review_id']}/decision", json={"approved": False})
+        self.assertEqual(self.client.get("/api/guardian/briefs").json(), [])
+        self.client.post("/api/settings/guardian", json={"enrolled": False})
+        self.client.post("/api/intake/share", json={"text": DEBIT.replace("TCS8841", "TCS8850"), "sender": "YourBank"})
+        self.assertEqual(self.client.get("/api/guardian/briefs").json(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

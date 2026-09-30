@@ -3,11 +3,15 @@ from datetime import datetime, timezone
 import os
 from pathlib import PurePath
 
-from fastapi import APIRouter, HTTPException
+from urllib.parse import parse_qs
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from core.ingest import kept, read_text_records, safe_parse
 from core.runtime import TriageRuntime
+from domain.briefs import guardian_brief
 from domain.enums import IncidentState
 from domain.intake import email_to_row, share_to_row
 from domain.logic import withhold
@@ -95,6 +99,16 @@ def intake_share(message: SharedMessage):
     return _take_in(share_to_row(message.text, message.sender, message.channel, _now()))
 
 
+@router.post("/intake/whatsapp", tags=["intake"])
+async def intake_whatsapp(request: Request):
+    """Webhook for a WhatsApp gateway (Twilio format): a form with From and Body. The message is taken in like a shared SMS."""
+    form = parse_qs((await request.body()).decode("utf-8", "replace"))
+    text, sender = form.get("Body", [""])[0], form.get("From", [""])[0].removeprefix("whatsapp:")
+    if text.strip():
+        _take_in(share_to_row(text, sender, "whatsapp", _now()))
+    return Response(content="<Response></Response>", media_type="application/xml")  # an empty reply: the agent never answers the sender
+
+
 @router.post("/reports", tags=["intake"], status_code=201, response_model=DecisionRecord)
 def ingest(report: RawInputReport):
     """A ready-made report. Most clients should use the two intake routes above instead."""
@@ -157,6 +171,13 @@ def reviews(status: str | None = None, audience: str | None = None):
     """The review queue. Filter with ?status=PENDING and ?audience=CAREGIVER or PERSON."""
     return [item for item in runtime.snapshot()["reviews"]
             if (status is None or item.status == status) and (audience is None or item.audience == audience)]
+
+
+@router.get("/guardian/briefs", tags=["caregiver"])
+def guardian_briefs():
+    """Each review waiting for the caregiver as a short plain message, with a link that opens WhatsApp ready to send it."""
+    return [guardian_brief(item, runtime.decisions[item.report_id]) for item in runtime.snapshot()["reviews"]
+            if item.status == "PENDING" and item.audience == "CAREGIVER"]
 
 
 @router.post("/reviews/{review_id}/decision", tags=["caregiver"], response_model=ReviewItem)

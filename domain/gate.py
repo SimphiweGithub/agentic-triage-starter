@@ -31,6 +31,12 @@ TEXT_RULES: dict[str, tuple[str, float, re.Pattern]] = {
     "premium": ("premium-rate number or paid-message terms", 0.3,
                 re.compile(r"(\b\d{2,3}p\b|\bR ?\d+(\.\d{2})? ?(/|per ) ?(day|week|wk|msg|sms|min)|\bper (min|msg|sms|week|wk|text)\b|/min|/msg|/wk"
                            r"|\b(reply|txt|text|sms) stop\b|\bstop to\b|\bunsub(scribe)?\b|\bstd (txt|msg|rate)\b|\b09\d{8,9}\b|\b08[47]\d{7,9}\b)", re.I)),
+    "impersonation": ("claims to be someone the reader knows, on a new number", 0.2,
+                      re.compile(r"\b(new number|changed my number|lost my phone|phone (is|was) (broken|stolen)|this is my new)\b", re.I)),
+    "money": ("asks the reader to send money", 0.3,
+              re.compile(r"\b(send (me |us )?(some )?(money|cash|airtime|R ?\d+)|(deposit|transfer|pay) (me |us )?(the |a |some )?(money|fee|deposit|R ?\d+))\b", re.I)),
+    "advance_fee": ("promises money or a parcel once a fee is paid", 0.3,
+                    re.compile(r"\b(inheritance|dear beneficiary|unclaimed (funds?|package|parcel)|(release|processing|clearance|customs|admin) fee|lottery)\b", re.I)),
 }
 TECH_SUPPORT_PATTERN = re.compile(r"\b(tech(nical)? support|virus|infected|anydesk|teamviewer|remote access|protection plan)\b", re.I)
 
@@ -43,12 +49,17 @@ MODEL_QUESTIONS: dict[str, dict] = {
     "prize": {"type": "noul", "instructions": "The message tells the reader they have won a prize, a reward or money, or have been specially selected."},
     "claim": {"type": "noul", "instructions": "The message tells the reader to call or text a number in order to claim or collect something."},
     "premium": {"type": "noul", "instructions": "The message involves a premium-rate number or a service that charges per message, per minute, per day or per week."},
+    "impersonation": {"type": "noul", "instructions": "The sender claims to be a relative or friend of the reader writing from a new or different number."},
+    "money": {"type": "noul", "instructions": "The message asks the reader to send, transfer or deposit money."},
+    "advance_fee": {"type": "noul", "instructions": "The message promises money, an inheritance or a parcel once the reader pays a fee."},
     "threat": {"type": "choice", "instructions": "Which kind of message is this?", "criteria": {
         ThreatDomain.BENIGN.value: "An ordinary message with no sign of a scam",
         ThreatDomain.GREY_MARKET_SUBSCRIPTION.value: "A subscription, premium-rate service or recurring charge the reader may not have knowingly agreed to",
         ThreatDomain.IDENTITY_FARMING.value: "An attempt to collect passwords, PINs, card details or identity documents",
         ThreatDomain.TECH_SUPPORT_SCAM.value: "Fake technical support, a fake virus warning, or a request for remote access",
         ThreatDomain.PRIZE_SCAM.value: "A fake prize, lottery win or reward the reader must act to claim",
+        ThreatDomain.IMPERSONATION.value: "Someone pretending to be a relative or friend, usually asking for money",
+        ThreatDomain.ADVANCE_FEE.value: "A promise of money, an inheritance or a parcel in return for an upfront fee",
         ThreatDomain.UNKNOWN.value: "Suspicious, but none of the above",
     }},
 }
@@ -109,6 +120,10 @@ def gate(text: str, signals: dict[str, Any], ask_model: Callable[[str], dict[str
         threat = ThreatDomain.TECH_SUPPORT_SCAM
     elif "credentials" in hits:
         threat = ThreatDomain.IDENTITY_FARMING
+    elif "impersonation" in hits:
+        threat = ThreatDomain.IMPERSONATION
+    elif "advance_fee" in hits:
+        threat = ThreatDomain.ADVANCE_FEE
     elif "prize" in hits:
         threat = ThreatDomain.PRIZE_SCAM
     elif signals["kind"] == "debit" or hits & {"subscription", "premium"}:

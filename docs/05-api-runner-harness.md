@@ -28,11 +28,11 @@ The ways into the engine, the way to score it, and the optional model code.
 
 The contract for the front end is in `API.md`. This section explains the code.
 
-**Line 17** — `router` collects the endpoints.
-**Line 18** — `runtime` is the single `TriageRuntime` for the whole server. All
+**Line 21** — `router` collects the endpoints.
+**Line 22** — `runtime` is the single `TriageRuntime` for the whole server. All
 state lives in it, in memory; restarting the server clears it.
 
-### Request and response shapes (lines 21–63)
+### Request and response shapes (lines 25–67)
 
 Each class describes a JSON body. FastAPI rejects a request that does not
 fit, with error 422, before any of our code runs.
@@ -48,16 +48,16 @@ fit, with error 422, before any of our code runs.
 - `Withheld` — the reply when a message is discarded: `status` and `reason`.
 - `PersonMessage` — one warning for the person: `incident_id` and `message`.
 
-### Helpers (lines 66–76)
+### Helpers (lines 70–80)
 
-- **66–67 `_now`** — the current UTC time as text.
-- **79–81 `take_in_email`** — one raw email in, one decision out. The API
+- **70–71 `_now`** — the current UTC time as text.
+- **83–85 `take_in_email`** — one raw email in, one decision out. The API
   route and the live mailbox both call it, so they cannot behave differently.
-- **70–76 `_take_in`** — the shared path for live intake:
-  - **72–74** — ask the domain whether the row must be withheld. If so, return
+- **74–80 `_take_in`** — the shared path for live intake:
+  - **76–78** — ask the domain whether the row must be withheld. If so, return
     a `Withheld` reply and store nothing.
-  - **75** — parse it safely.
-  - **76** — process it safely. A decision always comes back.
+  - **79** — parse it safely.
+  - **80** — process it safely. A decision always comes back.
 
 ### Endpoints
 
@@ -68,49 +68,98 @@ reply is sent.
 
 | Lines | Method and path | Group | What it does |
 |---|---|---|---|
-| 86–89 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
-| 92–95 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
-| 98–104 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
-| 109–112 | `GET /outbox` | person | The warnings written for the person |
-| 115–123 | `POST /incidents/{id}/feedback` | person | The person's own answer about an incident |
-| 128–131 | `GET /incidents` | caregiver | Every incident |
-| 134–144 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
-| 147–152 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
-| 155–158 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
-| 162–170 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
-| 173–181 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
-| 186–188 | `GET /health` | system | Confirms the server is up and reports which optional parts are on: mailbox, Jev, Gemini, live lookups |
-| 193–197 | `GET /state` | system | Everything in one call, plus the simulated world |
-| 201–205 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
-| 208–212 | `POST /reset` | system | Empty everything |
-| 215–222 | `POST /replay` | system | Reset, then process a list of reports |
-| 225–233 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 236–240 | `POST /replay/step` | system | Process the next messages in the queue |
+| 90–93 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
+| 96–99 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
+| 102–109 | `POST /intake/whatsapp` | intake | Webhook for a WhatsApp gateway; takes the message in like a shared SMS |
+| 112–118 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
+| 123–126 | `GET /outbox` | person | The warnings written for the person |
+| 129–137 | `POST /incidents/{id}/feedback` | person | The person's own answer about an incident |
+| 142–145 | `GET /incidents` | caregiver | Every incident |
+| 148–158 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
+| 161–166 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
+| 169–172 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
+| 176–180 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
+| 183–191 | `POST /reviews/{id}/decision` | caregiver | Approve or reject |
+| 194–202 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
+| 207–209 | `GET /health` | system | Confirms the server is up and reports which optional parts are on: mailbox, Jev, Gemini, live lookups |
+| 214–218 | `GET /state` | system | Everything in one call, plus the simulated world |
+| 222–226 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
+| 229–233 | `POST /reset` | system | Empty everything |
+| 236–243 | `POST /replay` | system | Reset, then process a list of reports |
+| 246–254 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 257–261 | `POST /replay/step` | system | Process the next messages in the queue |
 
-**`feedback` in detail (115–123)**
-- **118–119** — unknown incident: error 404.
-- **120** — a sentence describing the answer.
-- **121–122** — the answer is wrapped as a `RawInputReport` with `source`
+**`feedback` in detail (129–137)**
+- **132–133** — unknown incident: error 404.
+- **134** — a sentence describing the answer.
+- **135–136** — the answer is wrapped as a `RawInputReport` with `source`
   `"person"`. Its metadata names the incident (so the correlator links it
   explicitly) and carries the `feedback` value.
-- **123** — it is processed like any other message. The person's answer is
+- **137** — it is processed like any other message. The person's answer is
   evidence that goes through the same policy; it is not a command.
 
-**`reviews` in detail (155–159)** — `status` and `audience` are optional query
+**`intake_whatsapp` in detail (102–109)**
+- **103** — `async`, because reading the raw request body has to be awaited.
+- **105** — a WhatsApp gateway (this follows Twilio's format) posts a form,
+  not JSON. `parse_qs` turns `From=...&Body=...` into a dictionary. Reading
+  the body ourselves avoids adding a form-parsing package.
+- **106** — `text` is the message; `sender` is the number, with the
+  `whatsapp:` prefix removed.
+- **107–108** — an empty message is ignored; otherwise it goes through the
+  same `_take_in` path as a shared SMS, with the channel set to `whatsapp`.
+- **109** — reply with an empty response. A gateway would send any text in the
+  reply back to the sender, and the agent must never answer a scammer.
+
+Anyone who can reach the server can post to this route. A real deployment
+would check the gateway's signature on each request; that is not built.
+
+**`guardian_briefs` in detail (176–180)** — for every review that is
+`PENDING` and addressed to the `CAREGIVER`, build a brief from the review and
+the decision that opened it.
+
+**`reviews` in detail (169–173)** — `status` and `audience` are optional query
 parameters. `?status=PENDING&audience=PERSON` returns what is waiting for the
 person themselves; with nothing, every review is returned.
 
-**`replay_load` in detail (225–233)**
-- **229** — strip an invisible marker from the start of the text, read the
+**`replay_load` in detail (246–254)**
+- **250** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **230–231** — an unsupported file type returns error 400.
-- **232** — parse every row safely and hand the list to the runtime's queue.
+- **251–252** — an unsupported file type returns error 400.
+- **253** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.
 
 What the API does not have: authentication, and more than one protected
 person. Both are stated limits.
+
+---
+
+## `domain/briefs.py`
+
+Turns a pending review into a message a caregiver can read on their phone.
+
+### `guardian_brief` (lines 8–18)
+
+- **10** — `details` of the proposed action, or an empty dictionary.
+- **11** — `question`: the plain question written for the approver, falling
+  back to the technical reason.
+- **12** — `why`: the second line of the decision's trace, which is the
+  rationale with the evidence.
+- **13** — `text`: the brief itself.
+- **14–15** — if there is a dispute deadline, add it.
+- **16** — `number`: `GUARDIAN_WHATSAPP` from the environment, reduced to its
+  digits.
+- **17–18** — return the text and a `wa.me` link. Opening that link on a
+  phone opens WhatsApp with the caregiver's chat selected and the brief
+  already typed. `quote` makes the text safe to put in a link.
+
+The backend does not send the WhatsApp message. Sending automatically needs
+a WhatsApp Business account and an approved message template. The link needs
+nothing, and whoever taps it sees exactly what is being sent.
+
+One thing to say plainly: the brief contains the merchant and the amount, and
+it travels through WhatsApp once sent. That is the family's choice to make.
 
 ---
 

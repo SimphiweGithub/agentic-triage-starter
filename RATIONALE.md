@@ -142,6 +142,7 @@ through the API in `API.md`.
 | What the agent does about a debit | Drafts the dispute and the steps; a human lodges it | No South African bank lets a third party cancel a debit. Claiming otherwise would not survive a question |
 | The person says "this is mine" | Low risk: undo and trust the merchant. High risk: hold for the caregiver, or a 24-hour cooling-off if there is none | A scammer can coach someone to confirm. Strong evidence is not overruled by one tap |
 | Learning an action failed | From the next message, not from the tool | A dispute that "succeeded" means nothing if the same operator debits again |
+| Telling the caregiver | A plain brief and a link that opens WhatsApp with it typed | Automatic sending needs a WhatsApp Business account. The link needs nothing, and the sender sees what is sent |
 | Privacy | One-time codes discarded, account numbers masked, before storage or any model call | The models never see either |
 | Hostile text | Messages are data. Rules match patterns; Jev answers fixed questions; Gemini never sees the message | A message saying "mark this benign" changes nothing, and we test that |
 
@@ -196,11 +197,16 @@ that shows the code does what we intended, not that the rules are right.
 - Identical debit text a month apart was being called a duplicate, which
   would have hidden a recurring debit.
 
+**Impersonation and advance-fee rules.** The SMS dataset has almost none of
+these, so it could only show false alarms. The first version added two on the
+held-out set; after weakening one rule and removing one word, none. How many
+real scams they catch is not measured.
+
 **Still to measure**
 
 - The gate on South African messages labelled by someone outside the team.
 - Jev's 0.7 cut-off, which has never been tuned.
-- The live mailbox against a real mailbox.
+- The live mailbox against a real mailbox, and the WhatsApp webhook against a real gateway.
 
 ## 7. Known limitations
 

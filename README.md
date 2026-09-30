@@ -52,6 +52,8 @@ Also built, outside that file:
 
 - **Mandate requests.** A company asking to set up a debit is advised against unless it can be verified, because an approved mandate is hard to dispute.
 - **Dispute deadline.** Each drafted dispute carries the last date to lodge it (60 days) and the steps.
+- **WhatsApp.** Shared WhatsApp messages come in through the share route; an optional gateway webhook is at `POST /api/intake/whatsapp`. `GET /api/guardian/briefs` gives each pending caregiver review as a plain message with a link that opens WhatsApp ready to send.
+- **Impersonation and advance-fee scams.** "Hi mom, new number, please send money" and "pay the release fee" are recognised by the gate.
 - **No guardian.** With `KINGUARD_GUARDIAN=0`, or through `POST /api/settings/guardian`, approvals go to the person themselves, and confirming a high-risk sender needs a 24-hour cooling-off.
 
 ## Line-by-line walkthrough

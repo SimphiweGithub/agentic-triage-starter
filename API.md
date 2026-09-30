@@ -32,6 +32,9 @@ Two ways to connect a front end:
 | `POST /intake/share` | `{"text": "...", "sender": "YourBank", "channel": "sms"}` | A decision, or `{"status": "withheld", "reason": "..."}` |
 | `POST /intake/email` | `{"content": "<raw .eml text>"}` | The same |
 
+For a WhatsApp message the person forwards or shares, use `POST /intake/share`
+with `"channel": "whatsapp"`.
+
 `sender` and `channel` are optional. A message containing a one-time code is
 withheld: nothing is stored and no decision is made. Show that as "not kept".
 
@@ -66,6 +69,21 @@ Every review that asks for approval carries a plain question in
 `proposed_action.details.ask`, for example "R349.00 was taken by TechCare
 Support, which we do not think you agreed to. Shall we prepare a dispute for
 your bank?" Show that, not `reason`, to whoever is approving.
+
+### Telling the caregiver
+
+`GET /guardian/briefs` returns one entry per review waiting for the caregiver:
+
+```json
+[{"review_id": "REV-0001", "incident_id": "I0001",
+  "text": "KinGuard: R349.00 was taken by TechCare Support, which we do not think you agreed to. Shall we prepare a dispute for your bank? Why we flagged it: Risk 0.45. ... Open KinGuard to approve or reject. A dispute must be lodged by 2026-12-01.",
+  "whatsapp_link": "https://wa.me/27821234567?text=KinGuard%3A%20R349.00%20was%20taken..."}]
+```
+
+Show `text` in the app. Opening `whatsapp_link` on a phone opens WhatsApp with
+the brief already typed, to the number in `GUARDIAN_WHATSAPP`, or with a
+contact picker if that is not set. The backend does not send WhatsApp messages
+itself.
 
 ### 3. The caregiver
 
@@ -154,7 +172,7 @@ actions that were deliberately not repeated.
 | `relationship` | `NEW`, `RELATED`, `DUPLICATE` |
 | `proposed_action.type` | `WARN_PERSON`, `ADVISE_DECLINE`, `FLAG_SENDER`, `DRAFT_DISPUTE`, `BLOCK_OPERATOR`, `WITHDRAW` |
 | `action_outcome` | `NONE`, `PROPOSED`, `EXECUTED`, `FAILED`, `HELD_FOR_REVIEW`, `SUPPRESSED_DUPLICATE`, `SUPPRESSED_REPEAT` |
-| `labels.threat` | `BENIGN`, `GREY_MARKET_SUBSCRIPTION`, `IDENTITY_FARMING`, `TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `UNKNOWN` |
+| `labels.threat` | `BENIGN`, `GREY_MARKET_SUBSCRIPTION`, `IDENTITY_FARMING`, `TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `IMPERSONATION`, `ADVANCE_FEE`, `UNKNOWN` |
 | `status` (review) | `PENDING`, `APPROVED`, `REJECTED`, `APPROVED_ACTION_FAILED`, `SUPERSEDED` |
 
 ## Disputes
@@ -187,6 +205,14 @@ delivered at once.
 | `404` | The incident, review or decision does not exist |
 | `409` | Not allowed right now: a review already decided, or still in its cooling-off period |
 | `422` | The body does not match the schema; the response says which field |
+
+## WhatsApp gateway (optional)
+
+`POST /intake/whatsapp` accepts the form a WhatsApp gateway posts when a
+message arrives (Twilio's format: `From` and `Body`). Pointing a gateway's
+webhook at it makes forwarded WhatsApp messages arrive without anyone calling
+the API. It needs a gateway account and a public address for this server, and
+has only been tested with a simulated post.
 
 ## Live inbox
 

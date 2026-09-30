@@ -24,7 +24,7 @@ here without any tool being called.
 **Lines 11–13** — imports the Jev client, the threat enum, and two thresholds
 from policy.
 
-### `TEXT_RULES` (lines 18–34)
+### `TEXT_RULES` (lines 18–40)
 
 A dictionary. Each entry has a short `key` and three values: the `reason`
 written into the trace, the `weight` added to the score, and the `pattern`
@@ -39,33 +39,42 @@ that triggers it.
 | 27–28 | `prize` | "You have won", winner, prize, awarded, guaranteed, been selected | 0.3 |
 | 29–30 | `claim` | "To claim", "call now", "text WORD to 12345" | 0.3 |
 | 31–33 | `premium` | Pence or rand per message, minute, day or week; "reply STOP"; premium-rate number ranges | 0.3 |
+| 34–35 | `impersonation` | "This is my new number", "lost my phone": someone claiming to be a relative or friend. Weak alone, because honest people change numbers too | 0.2 |
+| 36–37 | `money` | Asks the reader to send, transfer or deposit money | 0.3 |
+| 38–39 | `advance_fee` | Inheritance, unclaimed parcel, release or clearance fee, lottery | 0.3 |
 
-The first four rules were written from knowledge of scams. The last three
-were written after measuring: see "How the rules were measured" below.
+The first four rules were written from knowledge of scams. The next three
+were written after measuring: see "How the rules were measured" below. The
+last three cover impersonation and advance-fee scams. The SMS dataset has
+almost none of those, so it could only tell us whether they cause false
+alarms. The first version did (two extra on the held-out set), so
+`impersonation` was weakened to 0.2 and one loose word was removed; after
+that the false alarms were back to two. How many real scams these three
+catch is not measured.
 
-### `TECH_SUPPORT_PATTERN` (line 35)
+### `TECH_SUPPORT_PATTERN` (line 41)
 
 Words that suggest a tech-support scam. Used only to name the threat type.
 
-### `MODEL_QUESTIONS` (lines 38–54)
+### `MODEL_QUESTIONS` (lines 44–65)
 
 The questions sent to Jev. Jev does not write text; it answers typed
 questions about a piece of content.
 
-- **Lines 39–45** — seven `noul` questions with the **same keys** as
+- **Lines 45–54** — ten `noul` questions with the **same keys** as
   `TEXT_RULES`. A Noul is a yes/no question; the answer is the probability,
   from 0 to 1, that the statement is true. Each asks one narrow thing, which
   is how the Jev documentation says to use it.
-- **Lines 46–53** — one `choice` question, `threat`. Its `criteria` are the
-  six `ThreatDomain` values, each with a description. The answer is the
+- **Lines 55–64** — one `choice` question, `threat`. Its `criteria` are the
+  eight `ThreatDomain` values, each with a description. The answer is the
   chosen option and a confidence.
 
-### `ask_jev` (lines 57–59)
+### `ask_jev` (lines 68–70)
 
 Calls the Jev client with the message as the state and `MODEL_QUESTIONS` as
 the questions. Only the masked message text is sent.
 
-### `GateVerdict` (lines 62–67)
+### `GateVerdict` (lines 73–78)
 
 - `score` — 0 to 1.
 - `reasons` — the findings that added to the score.
@@ -73,33 +82,33 @@ the questions. Only the masked message text is sent.
 - `notes` — remarks that did not change the score, such as "the model was
   unavailable". They are kept separate so they cannot inflate confidence.
 
-### `gate` (lines 70–118)
+### `gate` (lines 81–133)
 
 Arguments: the message `text`, its `signals`, and an optional `ask_model`
 function.
 
-**Rules (72–86)**
-- **72** — start: `score` 0, no `reasons`, `hits` (the set of keys that
+**Rules (83–97)**
+- **83** — start: `score` 0, no `reasons`, `hits` (the set of keys that
   matched) empty, no `notes`.
-- **73–77** — for every rule whose pattern is found, add its weight, record
+- **84–88** — for every rule whose pattern is found, add its weight, record
   its reason, and remember its key in `hits`.
-- **78–80** — replies go to a different domain than the sender: +0.2.
-- **81–83** — the mail provider's authentication failed: +0.25.
-- **84–86** — a link shows one address and leads to another: +0.3.
+- **89–91** — replies go to a different domain than the sender: +0.2.
+- **92–94** — the mail provider's authentication failed: +0.25.
+- **95–97** — a link shows one address and leads to another: +0.3.
 
-**Decision model (88–101)**
-- **88** — `model_threat` starts as `None`.
-- **89** — only runs if a model function was supplied.
-- **91** — ask the model once; `answers` holds every question's answer.
-- **92–97** — for each judgement: read the probability. If the key is **not**
+**Decision model (99–112)**
+- **99** — `model_threat` starts as `None`.
+- **100** — only runs if a model function was supplied.
+- **102** — ask the model once; `answers` holds every question's answer.
+- **103–108** — for each judgement: read the probability. If the key is **not**
   already in `hits` and the probability is at least `MODEL_YES`, add the same
   weight, record the reason marked as coming from the model, and add the key.
-- **98–99** — use the model's threat type only if its confidence is at least
+- **109–110** — use the model's threat type only if its confidence is at least
   `MODEL_THREAT_CONFIDENCE`. `ThreatDomain(...)` fails if the model returns a
   value outside the enum, which lands in the `except`.
-- **100–101** — any failure (no key, network, bad reply) becomes a note. The
+- **111–112** — any failure (no key, network, bad reply) becomes a note. The
   rule score already computed is untouched.
-- **102** — cap the score at 1.0.
+- **113** — cap the score at 1.0.
 
 Three properties to remember:
 
@@ -109,16 +118,18 @@ Three properties to remember:
    the threshold are in our code.
 3. **The gate works without it.**
 
-**Naming the threat (104–117)**
-- **104–105** — score 0: `BENIGN`.
-- **106–107** — a confident model answer other than benign is used.
-- **108–109** — tech-support words: `TECH_SUPPORT_SCAM`.
-- **110–111** — a credentials hit: `IDENTITY_FARMING`.
-- **112–113** — a prize hit: `PRIZE_SCAM`.
-- **114–115** — a debit, or a subscription or premium hit:
+**Naming the threat (115–132)**
+- **115–116** — score 0: `BENIGN`.
+- **117–118** — a confident model answer other than benign is used.
+- **119–120** — tech-support words: `TECH_SUPPORT_SCAM`.
+- **121–122** — a credentials hit: `IDENTITY_FARMING`.
+- **123–124** — an impersonation hit: `IMPERSONATION`.
+- **125–126** — an advance-fee hit: `ADVANCE_FEE`.
+- **127–128** — a prize hit: `PRIZE_SCAM`.
+- **129–130** — a debit, or a subscription or premium hit:
   `GREY_MARKET_SUBSCRIPTION`. `hits & {...}` is the overlap of two sets.
-- **116–117** — otherwise `UNKNOWN`.
-- **118** — return the verdict.
+- **131–132** — otherwise `UNKNOWN`.
+- **133** — return the verdict.
 
 Why a prompt injection fails here: the rules only search for patterns, and
 the model is asked fixed questions about the text, not given the text as

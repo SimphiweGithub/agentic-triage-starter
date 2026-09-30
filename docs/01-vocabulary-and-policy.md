@@ -81,10 +81,10 @@ What the engine did with a proposed action.
 | `SUPPRESSED_DUPLICATE` | Not run because the message was a duplicate |
 | `SUPPRESSED_REPEAT` | Not run because the same action was already taken |
 
-### `ThreatDomain` (lines 56–62)
+### `ThreatDomain` (lines 56–64)
 
 The kind of threat: `BENIGN`, `GREY_MARKET_SUBSCRIPTION`, `IDENTITY_FARMING`,
-`TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `UNKNOWN`.
+`TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `IMPERSONATION`, `ADVANCE_FEE`, `UNKNOWN`.
 
 ---
 
