@@ -317,11 +317,14 @@ messages, are what would show that.
 Measures the gate against labelled messages, so the threshold is chosen from
 data.
 
-- **Line 17 `SCAM_LABELS`** — labels that mean "scam": `scam` and `spam`.
-- **`load_labelled` (20–32)** — reads either JSONL rows with a `label` field,
-  or tab-separated `label<TAB>text` lines. Returns a list of
-  `(text, metadata, is_scam)`.
-- **`sweep` (35–49)**:
+- **Lines 17–18** — `SCAM_LABELS` (`scam`, `spam`) and `BENIGN_LABELS`
+  (`benign`, `ham`): the only labels accepted.
+- **`load_labelled` (21–37)** — reads either JSONL rows with a `label` field,
+  or tab-separated `label<TAB>text` lines (a third column, the sender, is
+  ignored). Lines 34–35 stop the run if any label is not recognised. Without
+  that check, a line nobody had labelled yet would silently count as benign
+  and flatter the score.
+- **`sweep` (40–54)**:
   - first, every message is masked, its signals extracted, and the gate run
     once. `scored` is a list of `(score, is_scam)`.
   - then, for each threshold from 0.05 to 0.95:
@@ -329,17 +332,57 @@ data.
     - `fp` — harmless messages at or above it: **false alarms**.
     - `fn` — scams below it: **missed**.
     - `precision`, `recall` and `f1` as in the harness.
-- **`split` (52–58)** — every fifth message (`index % 5 == 0`) is the
+- **`split` (57–63)** — every fifth message (`index % 5 == 0`) is the
   **holdout**; the rest are **dev**. Rules are written looking only at dev and
   judged on holdout, so the score is not flattered by rules fitted to the
   same messages.
-- **`main` (61–74)** — reads `--part` (`all`, `dev` or `holdout`), prints the
+- **`main` (66–79)** — reads `--part` (`all`, `dev` or `holdout`), prints the
   table and the threshold with the best F1. It uses Jev as well when
   `ENABLE_JEV=1`, so the two set-ups can be compared.
 
 A missed scam and a false alarm do not cost the same. Read the table for the
 lowest threshold whose false alarms the caregiver can live with, not only for
 the best F1.
+
+---
+
+## `collect_sms.py`
+
+Turns a phone's SMS export into a short file ready to be labelled. It exists
+so the gate can be measured on real South African messages. Everything runs
+on this machine.
+
+- **Line 18 `RECEIVED`** — the export marks received texts with type `1`.
+- **Line 19 `NOT_A_CONTACT`** — the values the export uses when the sender is
+  not in the phone's contacts.
+- **Line 20 `MONTHS`** — month names, used only to spot repeats.
+
+### `collect` (lines 23–42)
+
+- **25** — `by_sender`: each sender's kept messages.
+- **26** — `seen`: the shapes of messages already kept.
+- **27** — walk through every `<sms>` entry in the file. Picture messages are
+  a different tag and are skipped.
+- **28** — `text`: the body with its whitespace tidied.
+- **29–30** — skip anything sent by the phone's owner, and anything from a
+  saved contact. That is what keeps private conversations out.
+- **31–32** — skip empty messages and one-time codes.
+- **33** — mask account and card numbers.
+- **34–37** — `shape` is the message with every number turned into `0` and
+  every month into `month`. Two debit notices that differ only in amount or
+  date have the same shape, so only the first is kept.
+- **38** — file the message under its sender.
+- **39–42** — take at most `per_sender` messages from each sender, shuffle,
+  and cut to `limit`. One bank cannot fill the whole file, and the file stays
+  short enough to label by hand. The fixed `seed` makes the sample repeatable.
+
+### `main` (lines 45–55)
+
+Reads the export path and the options, calls `collect`, and writes each
+message as `?<TAB>text<TAB>sender`. A person then replaces each `?` with
+`scam` or `benign`. `calibrate.py` refuses the file until every line is labelled.
+
+The labels must come from someone who did not write the gate's rules.
 
 ---
 

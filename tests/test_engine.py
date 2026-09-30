@@ -17,7 +17,8 @@ from core.guardrails import enforce_action_safety
 from core.ingest import kept, read_records, safe_parse
 from core.runtime import TriageRuntime
 from domain.enums import ActionOutcome, ActionType, IncidentState, Relationship, ServiceDomain, SeverityLevel, ThreatDomain
-from calibrate import sweep
+from calibrate import load_labelled, sweep
+from collect_sms import collect
 from core.jev import system_one
 from domain.extract import extract_signals, redact
 from domain.gate import gate
@@ -669,6 +670,39 @@ class WhatsAppAndNewScamTests(unittest.TestCase):
         self.client.post("/api/settings/guardian", json={"enrolled": False})
         self.client.post("/api/intake/share", json={"text": DEBIT.replace("TCS8841", "TCS8850"), "sender": "YourBank"})
         self.assertEqual(self.client.get("/api/guardian/briefs").json(), [])
+
+
+class CollectionTests(unittest.TestCase):
+    EXPORT = """<?xml version='1.0' encoding='UTF-8'?>
+<smses count="7">
+  <sms address="Capitec" type="1" body="Capitec: Debit order of R99.00 to STREAMBOX ref SBX1001 from acc 1234567890 on 03 Oct." contact_name="(Unknown)" />
+  <sms address="Capitec" type="1" body="Capitec: Debit order of R99.00 to STREAMBOX ref SBX1001 from acc 1234567890 on 03 Nov." contact_name="(Unknown)" />
+  <sms address="Capitec" type="1" body="Capitec: your one-time PIN is 482913." contact_name="(Unknown)" />
+  <sms address="+27825550199" type="1" body="Hi mom this is my new number, please send R2000 today" contact_name="(Unknown)" />
+  <sms address="+27821112222" type="1" body="See you at lunch" contact_name="Thandi" />
+  <sms address="+27825550199" type="2" body="Who is this?" contact_name="(Unknown)" />
+  <mms address="x"><parts><part text="picture" /></parts></mms>
+</smses>"""
+
+    def test_export_is_reduced_to_safe_unlabelled_messages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            export = Path(directory) / "sms.xml"
+            export.write_text(self.EXPORT, encoding="utf-8")
+            sample = collect(export, per_sender=8, limit=150)
+        texts = [text for text, _ in sample]
+        self.assertEqual(len(sample), 2)                                   # one debit notice, one scam; repeats and the rest dropped
+        self.assertFalse(any("PIN" in text or "lunch" in text or "Who is this" in text for text in texts))
+        self.assertFalse(any("1234567890" in text for text in texts))
+
+    def test_unlabelled_lines_are_refused_not_counted_as_benign(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "messages.tsv"
+            tab = chr(9)
+            path.write_text(f"scam{tab}You have won{tab}33388\n?{tab}See you later{tab}Mum\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_labelled(path)
+            path.write_text(f"scam{tab}You have won{tab}33388\nbenign{tab}See you later{tab}Mum\n", encoding="utf-8")
+            self.assertEqual(load_labelled(path), [("You have won", {}, True), ("See you later", {}, False)])
 
 
 if __name__ == "__main__":

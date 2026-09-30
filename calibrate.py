@@ -15,20 +15,25 @@ from domain.extract import extract_signals, redact
 from domain.gate import ask_jev, gate
 
 SCAM_LABELS = {"scam", "spam"}
+BENIGN_LABELS = {"benign", "ham"}
 
 
 def load_labelled(path: Path) -> list[tuple[str, dict, bool]]:
-    """Returns (text, metadata, is_scam) for every usable line."""
+    """Returns (text, metadata, is_scam) for every line. An unlabelled line stops the run instead of counting as benign."""
     rows = []
-    for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+    for number, line in enumerate(path.read_text(encoding="utf-8-sig", errors="replace").splitlines(), start=1):
         if not line.strip():
             continue
         if path.suffix.lower() == ".jsonl":
             row = json.loads(line)
-            rows.append((str(row.get("payload", "")), row.get("metadata") or {}, str(row.get("label", "")).lower() in SCAM_LABELS))
+            label, text, metadata = str(row.get("label", "")), str(row.get("payload", "")), row.get("metadata") or {}
         else:
-            label, _, text = line.partition("\t")
-            rows.append((text, {}, label.strip().lower() in SCAM_LABELS))
+            cells = line.split("\t") + [""]  # label, text, and optionally the sender, which is ignored here
+            label, text, metadata = cells[0], cells[1], {}
+        label = label.strip().lower()
+        if label not in SCAM_LABELS | BENIGN_LABELS:
+            raise ValueError(f"line {number}: label {label!r} is not scam or benign. Label every line before measuring.")
+        rows.append((text, metadata, label in SCAM_LABELS))
     return rows
 
 
