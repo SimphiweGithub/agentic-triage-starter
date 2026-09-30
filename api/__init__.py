@@ -1,0 +1,1 @@
+"""Same-origin API package."""
