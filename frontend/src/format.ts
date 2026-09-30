@@ -1,8 +1,14 @@
-import type { ActionType, Incident, IncidentState, Severity } from './types'
+import type { ActionType, Incident, IncidentState, KinGuardState, Report, Review, Severity } from './types'
 
-export const PERSON = {
-  name: import.meta.env.VITE_PERSON_NAME || 'Nomsa',
-  relation: import.meta.env.VITE_PERSON_RELATION || 'Mom',
+/**
+ * The person being looked after. It is filled in from the server before the dashboard shows,
+ * so nothing is hard-coded. The object is shared, so every screen sees the same name.
+ */
+export const PERSON = { name: 'them', relation: '' }
+
+export function setPerson(person: { name: string; relation: string } | null): void {
+  PERSON.name = person?.name || 'them'
+  PERSON.relation = person?.relation || ''
 }
 
 const THREAT: Record<string, string> = {
@@ -10,6 +16,8 @@ const THREAT: Record<string, string> = {
   GREY_MARKET_SUBSCRIPTION: 'Unwanted subscription',
   IDENTITY_FARMING: 'Phishing for personal details',
   PRIZE_SCAM: 'Prize scam',
+  IMPERSONATION: 'Someone pretending to be a company',
+  ADVANCE_FEE: 'Pay-first scam',
   BENIGN: 'Looks safe',
   UNKNOWN: 'Suspicious message',
 }
@@ -68,6 +76,8 @@ export function actionLabel(type: ActionType, details: Record<string, unknown> =
       return company ? `Dispute the debit from ${company}` : 'Dispute the debit order'
     case 'BLOCK_OPERATOR':
       return company ? `Stop debits from ${company}` : 'Stop the debit operator'
+    case 'ADVISE_DECLINE':
+      return company ? `Decline the debit request from ${company}` : `Advised ${PERSON.name} to decline`
     case 'WITHDRAW':
       return 'Undid earlier actions'
     case 'RECORD_ONLY':
@@ -159,4 +169,105 @@ export function traceToSteps(lines: string[]): Step[] {
     }
   }
   return steps
+}
+
+// ---- plain-language view of an alert ----
+
+export type Group = 'needs' | 'handled' | 'safe'
+
+export const GROUP_WORD: Record<Group, string> = { needs: 'Needs you', handled: 'Handled', safe: 'Looked safe' }
+
+export function alertGroup(incident: Incident): Group {
+  if (incident.status === 'PENDING_REVIEW') return 'needs'
+  return incident.labels.threat === 'BENIGN' ? 'safe' : 'handled'
+}
+
+/** Channels that belong to a device. Mailboxes belong to the person and are listed separately. */
+export const CHANNELS = ['SMS', 'WhatsApp'] as const
+export type Channel = (typeof CHANNELS)[number]
+
+/** The channel the first message of an alert arrived on. */
+export function incidentChannel(incident: Incident, reports: Map<string, Report>): string {
+  const first = reports.get(incident.report_ids[0])
+  return first ? sourceLabel(first.source) : 'Message'
+}
+
+export function incidentReports(incident: Incident, state: KinGuardState): Report[] {
+  const byId = new Map(state.reports.map((item) => [item.report_id, item]))
+  return incident.report_ids.map((id) => byId.get(id)).filter((item): item is Report => Boolean(item))
+}
+
+/** The question to put to whoever approves, in the backend's own words. */
+export function reviewQuestion(review: Review): string {
+  const ask = review.proposed_action?.details.ask
+  return typeof ask === 'string' && ask ? ask : review.reason
+}
+
+export function reviewDeadline(review: Review): string {
+  const by = review.proposed_action?.details.dispute_by
+  return typeof by === 'string' && by ? `A dispute must be lodged by ${by}.` : ''
+}
+
+export function approveLabel(review: Review): string {
+  switch (review.proposed_action?.type) {
+    case 'DRAFT_DISPUTE':
+      return 'Yes, prepare the dispute'
+    case 'BLOCK_OPERATOR':
+      return 'Yes, stop these debits'
+    default:
+      return 'Yes, go ahead'
+  }
+}
+
+export function money(amount: unknown): string {
+  return typeof amount === 'number' ? `R${amount.toFixed(2)}` : ''
+}
+
+/** What each step of the reasoning found, as short sentences (the "Risk" line of the trace). */
+export function findings(lines: string[]): string[] {
+  return traceToSteps(lines).flatMap((step) => step.bullets ?? (step.tag === 'benign' && step.body ? [step.body] : []))
+}
+
+/** What saying yes will do, in plain words, so the button explains itself. */
+export function approveEffect(review: Review): string {
+  switch (review.proposed_action?.type) {
+    case 'DRAFT_DISPUTE':
+      return `KinGuard writes the dispute for the bank. It cannot send it: you or ${PERSON.name} lodge it.`
+    case 'BLOCK_OPERATOR':
+      return 'KinGuard asks the bank to refuse every debit from this company.'
+    case 'FLAG_SENDER':
+      return `KinGuard blocks this sender so messages stop reaching ${PERSON.name}.`
+    case 'WITHDRAW':
+      return 'KinGuard undoes what it did earlier, for example unblocking a sender.'
+    default:
+      return 'KinGuard goes ahead with what it proposed.'
+  }
+}
+
+/** What saying no will do. */
+export function rejectEffect(review: Review): string {
+  switch (review.proposed_action?.type) {
+    case 'DRAFT_DISPUTE':
+      return 'Nothing is written. KinGuard keeps watching this company.'
+    case 'BLOCK_OPERATOR':
+      return 'Debits are not stopped. KinGuard keeps watching and will ask again if it happens again.'
+    default:
+      return 'Nothing is done. KinGuard keeps watching.'
+  }
+}
+
+/** A short label for the kind of decision, used as a heading in lists. */
+export function decisionKind(review: Review): string {
+  switch (review.proposed_action?.type) {
+    case 'DRAFT_DISPUTE':
+      return 'Dispute a debit'
+    case 'BLOCK_OPERATOR':
+      return 'Stop a company taking money'
+    case 'FLAG_SENDER':
+      return 'Block a sender'
+    case 'WITHDRAW':
+      return 'Undo earlier actions'
+    default:
+      return 'Check an alert'
+  }
 }
