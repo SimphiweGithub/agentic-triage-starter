@@ -39,3 +39,10 @@
   .phone .state.off { background: #3d1512; color: #f6c3bd; }
   .phone .warning { background: #3a2215; color: #fde3cf; }
 }
+.phone .big + .big { margin-top: 0.6rem; }
+.phone .big.secondary { background: transparent; color: inherit; border: 2px solid currentColor; }
+.phone .big:disabled { opacity: 0.45; }
+.phone .row { display: flex; gap: 0.6rem; }
+.phone .row .big { margin-top: 0; }
+.phone .question { padding: 0.9rem 1rem; border-radius: 0.6rem; border: 2px solid #1f6f4a; margin-bottom: 0.8rem; }
+.phone .question ol { padding-left: 1.2rem; }

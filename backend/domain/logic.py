@@ -1,4 +1,4 @@
-"""KinGuard decisions: how a message is read, linked to an incident, and assessed."""
+"""Scam Stop decisions: how a message is read, linked to an incident, and assessed."""
 from datetime import datetime, timedelta, timezone
 import os
 from typing import Any
@@ -197,17 +197,20 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
         target_state = IncidentState.INVESTIGATING
         review_reason = review_reason or "Merchant could not be identified, so no dispute can be addressed"
         action = ActionProposal(type=ActionType.WARN_PERSON, service=ServiceDomain.PERSON, details={
-            "message": f"We noticed a debit of {amount_text} to {who} that we could not verify. Please check it before paying anything more."})
+            "message": f"We noticed a debit of {amount_text} to {who} that we could not verify. Please check it before paying anything more.",
+            "ask": f"Scam Stop could not verify a debit of {amount_text} to {who}. Send a warning about it?"})
     elif risk >= CONTAIN_THRESHOLD:
         if threat in (ThreatDomain.TECH_SUPPORT_SCAM, ThreatDomain.IDENTITY_FARMING):
             severity = SeverityLevel.HIGH
         action = ActionProposal(type=ActionType.FLAG_SENDER, service=ServiceDomain.MAIL_FILTER, details={
             "target": signals["sender"] if shared_provider or not signals["sender_domain"] else signals["sender_domain"],
-            "message": f"A message from {who} looks like a scam. We have blocked the sender. Please do not reply, pay, or call any number in it."})
+            "message": f"A message from {who} looks like a scam. We have blocked the sender. Please do not reply, pay, or call any number in it.",
+            "ask": f"A message from {who} looks like a scam. Block the sender and send a warning?"})
     else:
         severity, target_state = SeverityLevel.LOW, IncidentState.INVESTIGATING
         action = ActionProposal(type=ActionType.WARN_PERSON, service=ServiceDomain.PERSON, details={
-            "message": f"A message from {who} looks unusual. Please do not pay or share any details until it has been checked."})
+            "message": f"A message from {who} looks unusual. Please do not pay or share any details until it has been checked.",
+            "ask": f"Scam Stop is not sure about a message from {who}. Send a warning about it? Say no if it is expected."})
 
     if "message" in action.details:
         action.details["message"] = _kind_wording(action.details["message"])

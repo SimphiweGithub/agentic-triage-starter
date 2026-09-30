@@ -1,4 +1,4 @@
-// Shapes returned by the KinGuard backend. See backend/API.md.
+// Shapes returned by the Scam Stop backend. See backend/API.md.
 
 export type IncidentState =
   | 'NEW'

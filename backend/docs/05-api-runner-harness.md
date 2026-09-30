@@ -178,7 +178,7 @@ it travels through WhatsApp once sent. That is the family's choice to make.
 
 ## `api/mailbox.py`
 
-The optional live inbox. It reads a mailbox created for KinGuard, which the
+The optional live inbox. It reads a mailbox created for Scam Stop, which the
 protected person's own mailbox forwards to. The agent never holds the
 password to their real account.
 
@@ -600,7 +600,7 @@ Enabled with `ENABLE_JEV=1`.
 | Gemini | Reword the warning shown to the person | `domain/language.py`, `core/client.py` | `ENABLE_GEMINI=1` |
 
 `domain/relation.py` and `domain/assessor.py` are older, generic hooks that
-let Gemini judge relation and assessment. KinGuard does not switch them on.
+let Gemini judge relation and assessment. Scam Stop does not switch them on.
 
 ### `core/client.py`
 
@@ -637,7 +637,7 @@ message.
 
 Enabled with `ENABLE_LLM_ASSESS=1`. Its output goes through exactly the same
 state machine, guardrails and executor as the rule-based assessment. This file
-still carries the generic prompt and has not been adapted to KinGuard.
+still carries the generic prompt and has not been adapted to Scam Stop.
 
 ---
 

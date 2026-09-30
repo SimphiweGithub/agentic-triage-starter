@@ -26,7 +26,7 @@ function App() {
   return (
     <>
       <ClerkLoading>
-        <p className="empty muted">Loading KinGuard…</p>
+        <p className="empty muted">Loading Scam Stop…</p>
       </ClerkLoading>
       <Show when="signed-out">
         <SignedOutScreen />
@@ -42,7 +42,7 @@ function SignedOutScreen() {
   return (
     <main className="signed-out">
       <div className="card">
-        <p className="brand">KinGuard</p>
+        <p className="brand">Scam Stop</p>
         <h1>Watch over {PERSON.name}'s messages and money</h1>
         <p className="muted">
           Scam messages, predatory debit orders and creeping subscriptions are caught and explained. Anything that touches the bank waits
@@ -108,7 +108,7 @@ function Dashboard() {
         </div>
       </header>
 
-      {error && <p className="banner tone-danger offline">Can't reach the KinGuard server: {error}. Retrying every few seconds.</p>}
+      {error && <p className="banner tone-danger offline">Can't reach the Scam Stop server: {error}. Retrying every few seconds.</p>}
 
       <main className="content">
         {!state ? (

@@ -1,6 +1,6 @@
-# KinGuard backend
+# Scam Stop backend
 
-KinGuard protects an older or digitally vulnerable person from scam messages, predatory debit orders and subscription creep. This repository is the backend only; the front end is built separately against `API.md`.
+Scam Stop protects an older or digitally vulnerable person from scam messages, predatory debit orders and subscription creep. This repository is the backend only; the front end is built separately against `API.md`.
 
 ## Git attribution
 

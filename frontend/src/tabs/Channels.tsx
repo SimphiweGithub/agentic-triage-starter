@@ -99,7 +99,7 @@ function GmailCard({ enabled, onChecked }: { enabled: boolean; onChecked: (id: s
       <div className="card-head">
         <div>
           <h2>Gmail</h2>
-          <p className="muted">Read only. Pick an email to have KinGuard check it.</p>
+          <p className="muted">Read only. Pick an email to have Scam Stop check it.</p>
         </div>
         <button type="button" className="button primary" onClick={load} disabled={!enabled || busy !== null}>
           {busy === 'list' ? 'Loading…' : messages ? 'Refresh' : 'Load recent emails'}

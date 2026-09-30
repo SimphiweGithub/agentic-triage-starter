@@ -1,4 +1,4 @@
-"""KinGuard rules: what may happen automatically, what needs the caregiver, what never happens."""
+"""Scam Stop rules: what may happen automatically, what needs the caregiver, what never happens."""
 from domain.enums import ActionType, IncidentState, ServiceDomain, SeverityLevel
 
 ALLOWED_TRANSITIONS: dict[IncidentState, set[IncidentState]] = {

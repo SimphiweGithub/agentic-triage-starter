@@ -1,9 +1,9 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
-// The Android app loads the built front end from the phone and talks to the KinGuard server over the network.
+// The Android app loads the built front end from the phone and talks to the Scam Stop server over the network.
 const config: CapacitorConfig = {
   appId: 'za.kinguard.app',
-  appName: 'KinGuard',
+  appName: 'Scam Stop',
   webDir: 'dist',
   loggingBehavior: 'none', // otherwise debug builds write every message the plugin reads into the phone's system log
   server: {

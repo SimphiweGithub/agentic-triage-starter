@@ -724,7 +724,7 @@ class WhatsAppAndNewScamTests(unittest.TestCase):
         self.assertEqual(briefs[0]["review_id"], sent["review_id"])
         self.assertIn("Shall we prepare a dispute", briefs[0]["text"])
         self.assertIn("lodged by", briefs[0]["text"])
-        self.assertTrue(briefs[0]["whatsapp_link"].startswith("https://wa.me/27821234567?text=KinGuard"))
+        self.assertTrue(briefs[0]["whatsapp_link"].startswith("https://wa.me/27821234567?text=Scam%20Stop"))
         self.client.post(f"/api/reviews/{sent['review_id']}/decision", json={"approved": False})
         self.assertEqual(self.client.get("/api/guardian/briefs").json(), [])
         self.client.post("/api/settings/guardian", json={"enrolled": False})
@@ -861,6 +861,17 @@ class PersistenceAndWatchTests(unittest.TestCase):
         self.assertEqual(client.get("/api/incidents").json()[0]["status"], "CONTAINED")
         self.assertFalse(client.get("/api/gmail/watch").json()["watching"])
         client.post("/api/reset")
+
+
+class PlainQuestionTests(unittest.TestCase):
+    def test_every_action_that_can_be_held_carries_a_plain_question(self):
+        runtime = TriageRuntime()
+        text = "You have been selected. Reply to this number."
+        decisions = [runtime.process(message("Q1", "Urgent: send a gift card today to claim.")),
+                     runtime.process(message("Q2", DEBIT)),
+                     runtime.process(message("Q3", "Debit order of R89.00 to ZZQX HOLDINGS ref ZZQ1234 on 02 Oct."))]
+        for decision in decisions:
+            self.assertTrue(decision.proposed_action.details.get("ask"), decision.proposed_action.type)
 
 
 if __name__ == "__main__":

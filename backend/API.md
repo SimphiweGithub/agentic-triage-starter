@@ -1,4 +1,4 @@
-# KinGuard API contract
+# Scam Stop API contract
 
 For whoever builds the front end. The backend is the only thing that decides
 anything; the front end sends messages in, shows what the agent did, and
@@ -78,8 +78,8 @@ your bank?" Show that, not `reason`, to whoever is approving.
 
 ```json
 [{"review_id": "REV-0001", "incident_id": "I0001",
-  "text": "KinGuard: R349.00 was taken by TechCare Support, which we do not think you agreed to. Shall we prepare a dispute for your bank? Why we flagged it: Risk 0.45. ... Open KinGuard to approve or reject. A dispute must be lodged by 2026-12-01.",
-  "whatsapp_link": "https://wa.me/27821234567?text=KinGuard%3A%20R349.00%20was%20taken..."}]
+  "text": "Scam Stop: R349.00 was taken by TechCare Support, which we do not think you agreed to. Shall we prepare a dispute for your bank? Why we flagged it: Risk 0.45. ... Open Scam Stop to approve or reject. A dispute must be lodged by 2026-12-01.",
+  "whatsapp_link": "https://wa.me/27821234567?text=Scam Stop%3A%20R349.00%20was%20taken..."}]
 ```
 
 Show `text` in the app. Opening `whatsapp_link` on a phone opens WhatsApp with

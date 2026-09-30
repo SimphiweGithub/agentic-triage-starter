@@ -2,7 +2,7 @@
 
 Written for the technical defence. Sections 1 to 4 cover the goals, what the
 preliminary round taught us and the engine's design. Sections 5 to 7 cover
-KinGuard: the decisions, the measured results and the known limitations.
+Scam Stop: the decisions, the measured results and the known limitations.
 
 ## 1. Goals
 
@@ -108,7 +108,7 @@ each approach:
 - An illegal lifecycle request diverts to review and never applies.
 - A review hold survives a human decision and clears only when the risk does.
 
-## 5. KinGuard decisions
+## 5. Scam Stop decisions
 
 **The problem.** Older and less technical people lose money to scam messages,
 debit orders they never knowingly agreed to, and subscriptions that quietly
@@ -118,7 +118,7 @@ is technically valid. Families find out after the money is gone.
 **Why not the first idea.** We started with an agent that contains network
 attacks. A security judge pointed out that endpoint and response products
 already do this with agents of their own. We could not claim it was new, and
-we could not match them. KinGuard has no such product to be compared with.
+we could not match them. Scam Stop has no such product to be compared with.
 
 **What the agent is.** A backend that reads forwarded emails and shared SMS,
 links them into incidents, investigates with tools, acts within a policy,

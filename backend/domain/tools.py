@@ -92,7 +92,7 @@ def _live_registration(domain: str) -> datetime | None:
     labels = domain.split(".")
     for start in range(max(len(labels) - 1, 1)):  # try the full name, then drop leading labels (mail.shop.example -> shop.example)
         request = urllib.request.Request(f"https://rdap.org/domain/{'.'.join(labels[start:])}",
-                                         headers={"Accept": "application/rdap+json", "User-Agent": "KinGuard/0.1"})
+                                         headers={"Accept": "application/rdap+json", "User-Agent": "Scam Stop/0.1"})
         try:
             with urllib.request.urlopen(request, timeout=6) as response:
                 events = json.load(response).get("events", [])

@@ -1,7 +1,7 @@
 """Gmail, read through the Google account the user signed in with via Clerk.
 
 Clerk holds the Google OAuth token. The server asks Clerk for it on each call,
-so KinGuard never stores a Google password or refresh token of its own.
+so Scam Stop never stores a Google password or refresh token of its own.
 """
 import base64
 from datetime import datetime, timezone

@@ -5,7 +5,7 @@ import { SmsInbox, type PhoneSms } from './sms'
 import './phone.css'
 
 const FIRST_SYNC_DAYS = 7
-const OUTBOX_EVERY_MS = 15000
+const CHECK_EVERY_MS = 15000
 const saved = {
   get: (key: string, fallback: string) => localStorage.getItem(`kinguard.${key}`) ?? fallback,
   set: (key: string, value: string) => localStorage.setItem(`kinguard.${key}`, value),
@@ -16,14 +16,32 @@ interface Warning {
   message: string
 }
 
-/** The protected person's phone: reads texts, sends them to the KinGuard server, and shows its warnings. */
+/** A decision the server is asking the person to make themselves, when no guardian is enrolled. */
+interface Question {
+  review_id: string
+  reason: string
+  not_before: string | null
+  proposed_action: { type: string; details: { ask?: string } } | null
+}
+
+interface Dispute {
+  text: string
+  dispute_by: string
+  steps: string[]
+}
+
+/** The protected person's phone: reads texts, sends them to the Scam Stop server, shows warnings and, with no guardian, asks them. */
 export function PhoneApp() {
   const [server, setServer] = useState(() => saved.get('server', 'http://localhost:8000'))
   const [consented, setConsented] = useState(() => saved.get('consented', '') === 'yes')
   const [granted, setGranted] = useState(false)
+  const [guardian, setGuardian] = useState(true)
   const [warnings, setWarnings] = useState<Warning[]>([])
+  const [questions, setQuestions] = useState<Question[]>([])
+  const [disputes, setDisputes] = useState<Dispute[]>([])
   const [status, setStatus] = useState('')
   const [counts, setCounts] = useState({ checked: 0, kept: 0 })
+  const [now, setNow] = useState(0)
   const filters = useRef<RegExp[]>([])
 
   const call = useCallback(
@@ -33,8 +51,9 @@ export function PhoneApp() {
         headers: { 'Content-Type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
       })
-      if (!response.ok) throw new Error(`server answered ${response.status}`)
-      return (await response.json()) as T
+      const answer = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(typeof answer.detail === 'string' ? answer.detail : `server answered ${response.status}`)
+      return answer as T
     },
     [server],
   )
@@ -68,22 +87,68 @@ export function PhoneApp() {
       if (messages.length > 0) saved.set('since', String(messages[messages.length - 1].millis))
       setStatus(`Checked at ${new Date().toLocaleTimeString()}`)
     } catch (error) {
-      setStatus(`Could not reach KinGuard: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(`Could not reach Scam Stop: ${error instanceof Error ? error.message : String(error)}`)
     }
   }, [send])
 
-  async function agree() {
+  /** Warnings, the person's own questions and any disputes to lodge; a notification for anything new. */
+  const refresh = useCallback(async () => {
+    try {
+      const [outbox, health, pending, state] = await Promise.all([
+        call<Warning[]>('/outbox'),
+        call<{ guardian: boolean }>('/health'),
+        call<Question[]>('/reviews?status=PENDING&audience=PERSON'),
+        call<{ world: { disputes: Record<string, Dispute> } }>('/state'),
+      ])
+      const warned = Number(saved.get('warned', '0'))
+      for (const [index, warning] of outbox.slice(warned).entries()) {
+        await LocalNotifications.schedule({ notifications: [{ id: warned + index + 1, title: 'Scam Stop', body: warning.message }] })
+      }
+      saved.set('warned', String(outbox.length))
+      const asked = new Set(saved.get('asked', '').split(',').filter(Boolean))
+      for (const question of pending.filter((item) => !asked.has(item.review_id))) {
+        await LocalNotifications.schedule({ notifications: [{ id: 100000 + asked.size, title: 'Scam Stop needs your answer', body: askText(question) }] })
+        asked.add(question.review_id)
+      }
+      saved.set('asked', [...asked].join(','))
+      setWarnings([...outbox].reverse())
+      setGuardian(health.guardian)
+      setQuestions(health.guardian ? [] : pending)
+      setDisputes(Object.values(state.world.disputes))
+      setNow(Date.now())
+    } catch {
+      // the sync status already says when the server cannot be reached
+    }
+  }, [call])
+
+  async function agree(hasGuardian: boolean) {
     saved.set('consented', 'yes')
     setConsented(true)
+    await call('/settings/guardian', { enrolled: hasGuardian }).catch(() => undefined)
+    setGuardian(hasGuardian)
     const answer = await SmsInbox.requestAccess()
     setGranted(answer.granted)
     await LocalNotifications.requestPermissions()
   }
 
-  // On start: if consent was given before, check access quietly and do a first sync.
+  async function answer(question: Question, approved: boolean) {
+    try {
+      await call(`/reviews/${question.review_id}/decision`, { approved })
+      await refresh()
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function changeGuardian(hasGuardian: boolean) {
+    await call('/settings/guardian', { enrolled: hasGuardian }).catch(() => undefined)
+    await refresh()
+  }
+
+  // On start: if consent was given before, check access quietly.
   useEffect(() => {
     if (!consented) return
-    SmsInbox.requestAccess().then((answer) => setGranted(answer.granted))
+    SmsInbox.requestAccess().then((access) => setGranted(access.granted))
   }, [consented])
 
   // Once access is granted: sync, then send each new text the moment it arrives.
@@ -91,7 +156,7 @@ export function PhoneApp() {
     if (!granted) return
     const first = setTimeout(sync, 0)
     const listening = SmsInbox.addListener('smsReceived', (sms) => {
-      send([sms]).then(() => saved.set('since', String(sms.millis))).catch(() => setStatus('Could not reach KinGuard; will retry'))
+      send([sms]).then(() => saved.set('since', String(sms.millis))).catch(() => setStatus('Could not reach Scam Stop; will retry'))
     })
     return () => {
       clearTimeout(first)
@@ -99,43 +164,34 @@ export function PhoneApp() {
     }
   }, [granted, send, sync])
 
-  // Every few seconds: fetch the warnings, and notify for any that are new.
+  // Every few seconds: warnings, questions and disputes.
   useEffect(() => {
     if (!granted) return
-    const check = async () => {
-      try {
-        const all = await call<Warning[]>('/outbox')
-        const seen = Number(saved.get('warned', '0'))
-        for (const [index, warning] of all.slice(seen).entries()) {
-          await LocalNotifications.schedule({ notifications: [{ id: seen + index + 1, title: 'KinGuard', body: warning.message }] })
-        }
-        saved.set('warned', String(all.length))
-        setWarnings([...all].reverse())
-      } catch {
-        // the sync status already says when the server cannot be reached
-      }
-    }
-    const timer = setInterval(check, OUTBOX_EVERY_MS)
-    const first = setTimeout(check, 0)
+    const timer = setInterval(refresh, CHECK_EVERY_MS)
+    const first = setTimeout(refresh, 0)
     return () => {
       clearInterval(timer)
       clearTimeout(first)
     }
-  }, [granted, call])
+  }, [granted, refresh])
 
   if (!consented) {
     return (
       <main className="phone">
-        <p className="brand">KinGuard</p>
+        <p className="brand">Scam Stop</p>
         <h1>Hello {PERSON.name}</h1>
-        <p>KinGuard reads the text messages you receive and checks them for scams and unwanted debit orders.</p>
+        <p>Scam Stop reads the text messages you receive and checks them for scams and unwanted debit orders.</p>
         <ul>
           <li>One-time PINs, passwords and recovery codes are never sent anywhere.</li>
-          <li>Other texts are sent to your family's KinGuard server to be checked.</li>
-          <li>KinGuard never sends, deletes or replies to a message.</li>
+          <li>Other texts are sent to your Scam Stop server to be checked.</li>
+          <li>Scam Stop never sends, deletes or replies to a message.</li>
         </ul>
-        <button type="button" className="big" onClick={agree}>
-          I agree, protect my messages
+        <p>Is there someone in your family who should approve anything that touches your bank?</p>
+        <button type="button" className="big" onClick={() => agree(true)}>
+          I agree. My family will help
+        </button>
+        <button type="button" className="big secondary" onClick={() => agree(false)}>
+          I agree. I will decide myself
         </button>
       </main>
     )
@@ -143,21 +199,60 @@ export function PhoneApp() {
 
   return (
     <main className="phone">
-      <p className="brand">KinGuard</p>
-      <p className={granted ? 'state on' : 'state off'}>{granted ? 'Your messages are being watched' : 'KinGuard needs permission to read your messages'}</p>
+      <p className="brand">Scam Stop</p>
+      <p className={granted ? 'state on' : 'state off'}>{granted ? 'Your messages are being watched' : 'Scam Stop needs permission to read your messages'}</p>
       {!granted && (
-        <button type="button" className="big" onClick={agree}>
+        <button type="button" className="big" onClick={() => agree(guardian)}>
           Allow access
         </button>
       )}
+
+      {questions.length > 0 && (
+        <>
+          <h2>Needs your answer</h2>
+          {questions.map((question) => {
+            const waitUntil = question.not_before ? new Date(question.not_before) : null
+            const waiting = waitUntil !== null && waitUntil.getTime() > now
+            return (
+              <div key={question.review_id} className="question">
+                <p>{askText(question)}</p>
+                {waiting && <p className="muted">To keep you safe, you can say yes after {waitUntil.toLocaleString()}. Nobody can rush you.</p>}
+                <div className="row">
+                  <button type="button" className="big" disabled={waiting} onClick={() => answer(question, true)}>Yes</button>
+                  <button type="button" className="big secondary" onClick={() => answer(question, false)}>No</button>
+                </div>
+              </div>
+            )
+          })}
+        </>
+      )}
+
+      {disputes.length > 0 && (
+        <>
+          <h2>Disputes to lodge with your bank</h2>
+          {disputes.map((dispute) => (
+            <div key={dispute.text} className="question">
+              <p>{dispute.text}</p>
+              {dispute.dispute_by && <p><strong>Lodge it before {dispute.dispute_by}.</strong></p>}
+              <ol>{dispute.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+            </div>
+          ))}
+        </>
+      )}
+
       <h2>Warnings</h2>
       {warnings.length === 0 ? <p className="muted">Nothing to worry about yet.</p> : warnings.map((warning, index) => (
         <p key={`${warning.incident_id}-${index}`} className="warning">{warning.message}</p>
       ))}
+
       <details>
         <summary>Settings</summary>
+        <p>{guardian ? 'A family member approves anything that touches your bank.' : 'You decide yourself. Scam Stop asks you, and waits a day before undoing a warning.'}</p>
+        <button type="button" onClick={() => changeGuardian(!guardian)}>
+          {guardian ? 'I will decide myself' : 'My family will help'}
+        </button>
         <label>
-          KinGuard server
+          Scam Stop server
           <input value={server} onChange={(event) => { setServer(event.target.value); saved.set('server', event.target.value); filters.current = [] }} />
         </label>
         <button type="button" onClick={sync}>Check now</button>
@@ -166,4 +261,8 @@ export function PhoneApp() {
       </details>
     </main>
   )
+}
+
+function askText(question: Question): string {
+  return question.proposed_action?.details.ask || question.reason
 }

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">KinGuard</string>
-    <string name="title_activity_main">KinGuard</string>
+    <string name="app_name">Scam Stop</string>
+    <string name="title_activity_main">Scam Stop</string>
     <string name="package_name">za.kinguard.app</string>
     <string name="custom_url_scheme">za.kinguard.app</string>
 </resources>

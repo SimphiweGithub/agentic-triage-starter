@@ -11,8 +11,8 @@ from api.mailbox import start_polling
 from api.routes import router, take_in_email
 
 ROOT = Path(__file__).resolve().parent
-app = FastAPI(title="KinGuard API", version="0.2.0",
-              description="Backend for KinGuard. See API.md for the contract and /docs for interactive documentation.")
+app = FastAPI(title="Scam Stop API", version="0.2.0",
+              description="Backend for Scam Stop. See API.md for the contract and /docs for interactive documentation.")
 
 # Off by default: the API then answers only same-origin pages. A separately served front end
 # lists its own address in CORS_ORIGINS, for example http://localhost:5173 (comma separated).

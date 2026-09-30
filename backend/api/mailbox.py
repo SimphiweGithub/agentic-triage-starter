@@ -1,6 +1,6 @@
 """Optional live inbox: read unread emails from a dedicated mailbox and hand each one to the engine.
 
-The mailbox is one created for KinGuard. The protected person's own mailbox
+The mailbox is one created for Scam Stop. The protected person's own mailbox
 forwards to it, so the agent never holds the password to their real account.
 """
 import imaplib

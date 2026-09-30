@@ -1,4 +1,4 @@
-# KinGuard
+# Scam Stop
 
 This repository has two top-level folders:
 

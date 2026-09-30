@@ -10,7 +10,7 @@ def guardian_brief(review: ReviewItem, decision: DecisionRecord) -> dict[str, st
     details = review.proposed_action.details if review.proposed_action else {}
     question = details.get("ask") or review.reason
     why = decision.trace[1] if len(decision.trace) > 1 else ""
-    text = f"KinGuard: {question} Why we flagged it: {why} Open KinGuard to approve or reject."
+    text = f"Scam Stop: {question} Why we flagged it: {why} Open Scam Stop to approve or reject."
     if details.get("dispute_by"):
         text += f" A dispute must be lodged by {details['dispute_by']}."
     number = "".join(character for character in os.getenv("GUARDIAN_WHATSAPP", "") if character.isdigit())

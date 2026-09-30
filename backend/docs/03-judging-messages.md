@@ -383,7 +383,7 @@ so it was replaced with the creditor-code lookup above, which needs no model.
 
 ## `domain/language.py`
 
-The only place Gemini is used by KinGuard: one function, whose output Python
+The only place Gemini is used by Scam Stop: one function, whose output Python
 checks before using.
 
 - **Line 13 `PROMPTS`** — the folder holding the prompt files.
@@ -491,7 +491,7 @@ Called when the person says a charge or sender is legitimate.
 - **126–127** — if Gemini fails, or its message fails the safety check, use
   the standard wording.
 
-### `assess` (lines 130–217)
+### `assess` (lines 130–220)
 
 Called once per message. Returns an `Assessment`.
 
@@ -541,7 +541,7 @@ Called once per message. Returns an `Assessment`.
 - **173** — defaults: `MEDIUM`, ask for `CONTAINED`.
 - **175** — `amount_text`: the amount in words for messages, or "an amount".
 
-**The response ladder (176–210)**
+**The response ladder (176–212)**
 - **176–182** — a mandate request: `ADVISE_DECLINE`. The message tells the
   person who is asking, for how much, and that it is hard to reverse once
   approved. `HIGH` for R300 or more. Nothing is contained, because the choice
@@ -556,17 +556,22 @@ Called once per message. Returns an `Assessment`.
   `dispute_by`: the message date plus `DISPUTE_WINDOW_DAYS`.
 - **196–200** — a suspicious debit from an unidentified merchant: only warn
   the person, and ask for a human.
-- **201–206** — a suspicious message at or above `CONTAIN_THRESHOLD`:
+- **202–207** — a suspicious message at or above `CONTAIN_THRESHOLD`:
   `FLAG_SENDER`, `HIGH` for tech-support or identity threats. The target is
   the single address for a shared provider, otherwise the whole domain.
-- **207–210** — a mildly suspicious message: `WARN_PERSON`, `LOW`.
+- **209–212** — a mildly suspicious message: `WARN_PERSON`, `LOW`.
 
-**Finish (212–217)**
-- **212–213** — if the action carries a message for the person, pass it
+Every action on the ladder carries `ask`: a plain question for whoever has
+to approve it, the caregiver or, with no guardian, the person. It was added
+after the first real sync held a warning whose only explanation was
+"Confidence below 0.75". The question never goes to a model.
+
+**Finish (215–220)**
+- **215–216** — if the action carries a message for the person, pass it
   through `_kind_wording`.
-- **214–215** — a resolved incident that receives new suspicious evidence is
+- **217–218** — a resolved incident that receives new suspicious evidence is
   asked to reopen.
-- **216–217** — return the assessment.
+- **219–220** — return the assessment.
 
 ### What this file does not do
 

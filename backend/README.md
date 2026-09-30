@@ -1,4 +1,4 @@
-# KinGuard
+# Scam Stop
 
 An agent that protects an older or digitally vulnerable person from scam messages, predatory debit orders and subscription creep. It reads forwarded emails and shared SMS messages, investigates them with tools, acts within a policy, checks whether its action worked, and corrects itself. A caregiver approves anything that touches the person's bank relationship.
 
@@ -62,7 +62,7 @@ All off by default. Set them as environment variables before starting the server
 | `ENABLE_JEV=1` with `TYPESAFE_API_KEY` | The gate also asks Jev four yes/no questions and the threat type. Jev can add suspicion, never remove it. Measured on held-out SMS: rules alone caught 53%, rules plus Jev 87%. |
 | `ENABLE_GEMINI=1` with `GEMINI_API_KEY` | Gemini rewords the warning shown to the person. The result is rejected if it contains a number, link or address. `GEMINI_MODEL` is optional (default `gemini-3.5-flash-lite`). |
 
-| `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD` | A live inbox: unread emails in a mailbox created for KinGuard are taken in every `IMAP_POLL_SECONDS` (default 15). Tested with a stand-in mailbox only. |
+| `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD` | A live inbox: unread emails in a mailbox created for Scam Stop are taken in every `IMAP_POLL_SECONDS` (default 15). Tested with a stand-in mailbox only. |
 | `CLERK_SECRET_KEY` | Enables the Gmail routes (`/api/gmail/...`). The server checks the user's Clerk session and asks Clerk for their Google token. Tested with stand-ins only. |
 
 Every model call has a rule-based fallback, and model output passes through the same state machine, guardrails and executor as the rules.

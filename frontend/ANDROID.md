@@ -1,8 +1,8 @@
-# KinGuard on Android
+# Scam Stop on Android
 
 The same front end, wrapped with Capacitor. On a phone it shows the protected
 person's view, not the caregiver dashboard: it asks for consent, reads the SMS
-inbox, sends each text to the KinGuard server, and shows the warnings the
+inbox, sends each text to the Scam Stop server, and shows the warnings the
 server writes, as notifications too.
 
 ## What runs where
@@ -50,7 +50,7 @@ adb reverse tcp:8000 tcp:8000
 
 4. On the laptop, `backend/.env` must allow the app's origin:
    `CORS_ORIGINS=https://localhost,http://localhost`.
-5. Open KinGuard on the phone, agree, and allow SMS access and notifications.
+5. Open Scam Stop on the phone, agree, and allow SMS access and notifications.
 
 To use Wi-Fi instead of USB, start the backend with `--host 0.0.0.0` and put
 the laptop's address, for example `http://192.168.1.20:8000`, under Settings

@@ -1,4 +1,4 @@
-"""KinGuard vocabulary: every label the agent is allowed to use."""
+"""Scam Stop vocabulary: every label the agent is allowed to use."""
 from enum import Enum
 
 
