@@ -1,6 +1,7 @@
 import os
 
 os.environ["KINGUARD_SKIP_ENV_FILE"] = "1"  # tests never read real keys or switches from .env
+os.environ["KINGUARD_STATE_FILE"] = ""  # and never write the real saved state
 
 import base64
 from datetime import timedelta
@@ -27,7 +28,7 @@ from domain.investigate import investigate
 from domain.language import write_person_message
 from domain.intake import email_to_row
 from domain.logic import parse_record, parse_timestamp, withhold
-from domain.tools import WORLD, domain_age, identify_operator, merchant_registry
+from domain.tools import WORLD, domain_age, identify_operator, merchant_registry, reset_world
 from domain.policy import ALLOWED_SERVICE_ACTIONS, FORBIDDEN_ACTIONS
 from domain.schemas import ActionProposal, Assessment, RawInputReport
 from evaluation import clustering, evaluate, load_jsonl
@@ -809,6 +810,49 @@ class PhoneSyncTests(unittest.TestCase):
         self.assertEqual(len(patterns["withhold"]), 2)
         import re
         self.assertTrue(any(re.search(pattern, "Your recovery code is 4471", re.I) for pattern in patterns["withhold"]))
+
+
+class PersistenceAndWatchTests(unittest.TestCase):
+    def test_state_survives_a_restart(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"KINGUARD_STATE_FILE": str(Path(directory) / "state.json")}):
+            first = TriageRuntime()
+            lure = first.process(parse_record(kinguard_rows()["K01"]))
+            debit = first.process(parse_record(kinguard_rows()["K04"]))
+            first.decide_review(debit.review_id, approved=True)
+            WORLD.guardian = False
+            first.save()
+            reset_world()
+            second = TriageRuntime()
+            self.assertEqual(set(second.incidents), {lure.incident_id})
+            self.assertEqual(second.reviews[debit.review_id].status, "APPROVED")
+            self.assertIn("techcare-help.example", WORLD.flagged)
+            self.assertIn("2026/118822/07", WORLD.disputes)
+            self.assertFalse(WORLD.guardian)
+            self.assertEqual(second.process(parse_record(kinguard_rows()["K01"])), lure)  # same message again: same decision
+            fresh = second.process(parse_record(kinguard_rows()["K05"]))
+            self.assertEqual(fresh.incident_id, "I0002")  # numbering carries on
+            second.reset()
+            self.assertEqual(TriageRuntime().incidents, {})
+
+    def test_gmail_watch_takes_in_each_new_email_once(self):
+        import api.gmail as gmail
+        raw = base64.urlsafe_b64encode((ROOT / "samples" / "lure.eml").read_bytes()).decode()
+        calls = []
+
+        def fake_get(token, path, params=None):
+            calls.append(path)
+            return {"messages": [{"id": "m1"}]} if path == "/messages" else {"raw": raw}
+
+        client = TestClient(app)
+        client.post("/api/reset")
+        gmail.WATCH["seen"].clear()
+        with patch.object(gmail, "google_token", return_value="token"), patch.object(gmail, "gmail_get", side_effect=fake_get):
+            self.assertEqual(gmail.check_new_mail("user_1"), 1)
+            self.assertEqual(gmail.check_new_mail("user_1"), 0)
+        self.assertEqual(calls.count("/messages/m1"), 1)
+        self.assertEqual(client.get("/api/incidents").json()[0]["status"], "CONTAINED")
+        self.assertFalse(client.get("/api/gmail/watch").json()["watching"])
+        client.post("/api/reset")
 
 
 if __name__ == "__main__":

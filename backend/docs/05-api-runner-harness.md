@@ -21,10 +21,12 @@ The ways into the engine, the way to score it, and the optional model code.
 - **Line 23** — every route in the router is served under `/api`.
 - **Line 24** — the Gmail routes are served under `/api/gmail`. They answer
   503 unless `CLERK_SECRET_KEY` is set.
-- **Line 25** — start the live mailbox thread. It does nothing unless
+- **Lines 25–26** — if `GMAIL_WATCH_USER` and the Clerk key are set, resume
+  watching that user's Gmail straight away after a restart.
+- **Line 27** — start the live mailbox thread. It does nothing unless
   `IMAP_HOST` is set.
-- **Line 26** — the `static` folder is served under `/static`.
-- **Lines 29–32** — the address `/` returns a plain developer console for
+- **Line 28** — the `static` folder is served under `/static`.
+- **Lines 31–34** — the address `/` returns a plain developer console for
   watching the engine. The product front end is built separately.
 
 ---
@@ -94,10 +96,10 @@ reply is sent.
 | 223–227 | `GET /health` | system | Confirms the server is up, guardian status, and optional parts: mailbox, Jev, Gemini, live lookups and Gmail (true when `CLERK_SECRET_KEY` is set) |
 | 230–234 | `GET /state` | system | Everything in one call, plus the simulated world |
 | 238–242 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
-| 245–249 | `POST /reset` | system | Empty everything |
-| 252–259 | `POST /replay` | system | Reset, then process a list of reports |
-| 262–270 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 273–277 | `POST /replay/step` | system | Process the next messages in the queue |
+| 246–250 | `POST /reset` | system | Empty everything |
+| 253–260 | `POST /replay` | system | Reset, then process a list of reports |
+| 263–271 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 274–278 | `POST /replay/step` | system | Process the next messages in the queue |
 
 **`feedback` in detail (145–153)**
 - **148–149** — unknown incident: error 404.
@@ -131,11 +133,11 @@ the decision that opened it.
 parameters. `?status=PENDING&audience=PERSON` returns what is waiting for the
 person themselves; with nothing, every review is returned.
 
-**`replay_load` in detail (262–270)**
-- **266** — strip an invisible marker from the start of the text, read the
+**`replay_load` in detail (263–271)**
+- **267** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **267–268** — an unsupported file type returns error 400.
-- **269** — parse every row safely and hand the list to the runtime's queue.
+- **268–269** — an unsupported file type returns error 400.
+- **270** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.
@@ -281,6 +283,41 @@ unescaped, because Gmail sends it HTML-escaped.
 
 Listing has been run against a real Gmail account through the front end.
 The tests use stand-ins for Clerk and Gmail.
+
+---
+
+### Watching Gmail automatically (lines 100–158)
+
+Added so nobody has to click each email. After the user signs in once, the
+server checks their inbox on a timer.
+
+- **Line 100 `WATCH`** — the watcher's memory: which user, the running
+  thread, the Gmail ids already checked, the last check time, the last error,
+  and how many emails have been taken in.
+- **`check_new_mail` (103–112)**:
+  - **105** — get the user's Google token from Clerk.
+  - **106** — list up to `limit` inbox emails from the last two days.
+  - **107** — keep only ids not checked yet, oldest first.
+  - **108–111** — fetch each one in full, hand it to the engine exactly as a
+    forwarded email, and remember its id. After a restart the list is empty,
+    but re-checking an email returns its earlier decision, because its id
+    comes from the email's own Message-ID.
+- **`start_watching` (115–133)**:
+  - **117** — remember whose inbox to watch.
+  - **118–119** — if a watcher is already running, it simply switches user.
+  - **120** — how often to check: `GMAIL_WATCH_SECONDS`, default 60.
+  - **122–130 `loop`** — while a user is set: check, clear or record the
+    error, note the time, wait. A Gmail or Clerk problem is recorded, never
+    raised, so it cannot stop the server.
+  - **132–133** — run the loop on a background thread that ends with the server.
+- **`watch_status` (136–138)** — whether it is watching, the last check, the
+  last error, and the count so far.
+- **`POST /gmail/watch` (141–145)** — the signed-in user starts watching their
+  own inbox.
+- **`GET /gmail/watch` (148–151)** — the status, for the dashboard.
+- **`DELETE /gmail/watch` (154–158)** — stop; the loop ends after its current wait.
+
+Only one inbox is watched at a time, matching the one protected person.
 
 ---
 

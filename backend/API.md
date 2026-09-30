@@ -237,6 +237,21 @@ Add the app's origin to `CORS_ORIGINS` in `backend/.env`:
 ones. Plain `http` to the laptop also needs cleartext allowed in the app's
 Capacitor configuration.
 
+## Checking Gmail automatically
+
+After the user signs in with Google, call `POST /gmail/watch` once (with the
+same `Authorization` header as the other Gmail calls). The server then checks
+that inbox every 60 seconds and takes in each new email by itself; new
+incidents appear in `GET /incidents` and `GET /state` as usual.
+`GET /gmail/watch` returns `watching`, `last_check`, `last_error` and
+`taken_in`, for a status line on the Channels tab. `DELETE /gmail/watch` stops it.
+
+## Saved state
+
+The backend now saves everything to `backend/data/state.json` after each
+change and loads it on start-up, so restarting the server no longer clears
+incidents, reviews or the action history. `POST /reset` still empties it.
+
 ## WhatsApp gateway (optional)
 
 `POST /intake/whatsapp` accepts the form a WhatsApp gateway posts when a

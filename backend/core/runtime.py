@@ -1,9 +1,10 @@
-"""Domain-neutral, in-memory orchestration and audit trail."""
+"""Domain-neutral orchestration and audit trail, saved to disk after every change (see core/store.py)."""
 from datetime import datetime, timedelta, timezone
 from itertools import count
 import os
 from threading import RLock
 
+from core import store
 from core.correlator import Correlator
 from core.executor import execute_approved, execute_with_correction
 from core.fsm import transition_state
@@ -27,9 +28,21 @@ class TriageRuntime:
         self.correlator = correlator or Correlator()
         self.llm_assess = os.getenv("ENABLE_LLM_ASSESS") == "1"
         self.now = lambda: datetime.now(timezone.utc)  # replaceable, so tests can move time forward
-        self.reset()
+        self._clear()
+        if store.load(self):  # carry on from the last saved state; new ids continue after the highest saved one
+            self._incident_ids = count(1 + max((int(key[1:]) for key in self.incidents if key[1:].isdigit()), default=0))
+            self._review_ids = count(1 + max((int(key[4:]) for key in self.reviews if key[4:].isdigit()), default=0))
 
     def reset(self) -> None:
+        with self.lock:
+            self._clear()
+            store.save(self)
+
+    def save(self) -> None:
+        with self.lock:
+            store.save(self)
+
+    def _clear(self) -> None:
         with self.lock:
             self.reports: dict[str, RawInputReport] = {}
             self.incidents: dict[str, IncidentRecord] = {}
@@ -153,6 +166,7 @@ class TriageRuntime:
                 previous_severity=previous[1], previous_confidence=previous[2], labels=dict(incident.labels), trace=trace)
             self.reports[report.report_id] = report
             self.decisions[report.report_id] = decision
+            store.save(self)
             return decision
 
     def record_failure(self, report: RawInputReport, error: str) -> DecisionRecord:
@@ -172,6 +186,7 @@ class TriageRuntime:
                 trace=[f"Processing failed: {error}", "No assessment or action; sent to human review."])
             self.reports[report.report_id] = report
             self.decisions[report.report_id] = decision
+            store.save(self)
             return decision
 
     def process_safely(self, report: RawInputReport, parse_error: str | None = None) -> DecisionRecord:
@@ -203,6 +218,7 @@ class TriageRuntime:
                 raise ValueError("Review already decided")
             if not approved:
                 item.status = "REJECTED"
+                store.save(self)
                 return item
             if item.not_before and self.now() < datetime.fromisoformat(item.not_before):
                 raise ValueError(f"Cooling-off period: this cannot be approved before {item.not_before}")
@@ -218,6 +234,7 @@ class TriageRuntime:
                 elif not self._pending(incident.incident_id):
                     target = STATE_AFTER_APPROVED.get(record.action.type, IncidentState.INVESTIGATING)
                     incident.status = transition_state(incident.status, target)
+            store.save(self)
             return item
 
     def move_state(self, incident_id: str, target: IncidentState) -> IncidentRecord:
@@ -229,6 +246,7 @@ class TriageRuntime:
             if next_state is IncidentState.PENDING_REVIEW and target is not IncidentState.PENDING_REVIEW:
                 raise ValueError("Requested transition is illegal")
             incident.status = next_state
+            store.save(self)
             return incident
 
     def snapshot(self) -> dict:

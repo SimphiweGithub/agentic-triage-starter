@@ -37,6 +37,21 @@ def reset_world() -> None:
     WORLD.__init__()
 
 
+def world_state() -> dict:
+    """The world as plain JSON values, for saving to disk. Sets become sorted lists."""
+    return {"outbox": WORLD.outbox, "flagged": sorted(WORLD.flagged), "disputes": WORLD.disputes,
+            "blocked": sorted(WORLD.blocked), "trusted": sorted(WORLD.trusted), "debits": WORLD.debits,
+            "guardian": WORLD.guardian}
+
+
+def restore_world(saved: dict) -> None:
+    """Put a saved world back."""
+    WORLD.__init__()
+    WORLD.outbox, WORLD.disputes, WORLD.debits = saved["outbox"], saved["disputes"], saved["debits"]
+    WORLD.flagged, WORLD.blocked, WORLD.trusted = set(saved["flagged"]), set(saved["blocked"]), set(saved["trusted"])
+    WORLD.guardian = saved["guardian"]
+
+
 # Fixture data standing in for registries we cannot query. All names and domains are fictional.
 DOMAIN_REGISTERED = {
     "techcare-help.example": "2026-09-27",

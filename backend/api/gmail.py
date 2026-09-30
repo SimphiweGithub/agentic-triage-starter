@@ -4,9 +4,12 @@ Clerk holds the Google OAuth token. The server asks Clerk for it on each call,
 so KinGuard never stores a Google password or refresh token of its own.
 """
 import base64
+from datetime import datetime, timezone
 import html
 import os
 from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
 
 import httpx
 from clerk_backend_api import Clerk
@@ -90,3 +93,66 @@ def intake(message_id: str, user_id: str = Depends(signed_in_user)):
     """Hand one Gmail email to the engine, exactly as if it had been forwarded as .eml text."""
     raw = gmail_get(google_token(user_id), f"/messages/{message_id}", {"format": "raw"})["raw"]
     return take_in_email(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "replace"))
+
+
+# ---- watching: check the signed-in user's inbox on a timer, so nobody has to click ----
+
+WATCH = {"user_id": None, "thread": None, "seen": set(), "last_check": None, "last_error": None, "taken_in": 0}
+
+
+def check_new_mail(user_id: str, limit: int = 10) -> int:
+    """Take in each inbox email from the last two days that has not been checked yet, oldest first."""
+    token = google_token(user_id)
+    found = gmail_get(token, "/messages", {"maxResults": limit, "q": "in:inbox newer_than:2d"}).get("messages", [])
+    new = [item["id"] for item in reversed(found) if item["id"] not in WATCH["seen"]]
+    for message_id in new:
+        raw = gmail_get(token, f"/messages/{message_id}", {"format": "raw"})["raw"]
+        take_in_email(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "replace"))
+        WATCH["seen"].add(message_id)  # after a restart this starts empty; re-checking an email returns its earlier decision
+    return len(new)
+
+
+def start_watching(user_id: str) -> None:
+    """Watch this user's inbox every GMAIL_WATCH_SECONDS (default 60). One watcher at a time."""
+    WATCH["user_id"] = user_id
+    if WATCH["thread"] is not None and WATCH["thread"].is_alive():
+        return
+    seconds = float(os.getenv("GMAIL_WATCH_SECONDS", "60"))
+
+    def loop() -> None:
+        while WATCH["user_id"]:
+            try:
+                WATCH["taken_in"] += check_new_mail(WATCH["user_id"])
+                WATCH["last_error"] = None
+            except Exception as error:  # a Gmail or Clerk problem must never stop the server
+                WATCH["last_error"] = f"{type(error).__name__}: {getattr(error, 'detail', error)}"
+            WATCH["last_check"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            time.sleep(seconds)
+
+    WATCH["thread"] = threading.Thread(target=loop, daemon=True, name="gmail-watch")
+    WATCH["thread"].start()
+
+
+def watch_status() -> dict:
+    return {"watching": bool(WATCH["user_id"]), "last_check": WATCH["last_check"], "last_error": WATCH["last_error"],
+            "taken_in": WATCH["taken_in"]}
+
+
+@router.post("/watch")
+def watch(user_id: str = Depends(signed_in_user)):
+    """Start checking the signed-in user's inbox automatically."""
+    start_watching(user_id)
+    return watch_status()
+
+
+@router.get("/watch")
+def watch_state():
+    """Whether the inbox is being watched, when it was last checked, and the last error if any."""
+    return watch_status()
+
+
+@router.delete("/watch")
+def stop_watching():
+    """Stop checking the inbox. The loop ends after its current wait."""
+    WATCH["user_id"] = None
+    return watch_status()

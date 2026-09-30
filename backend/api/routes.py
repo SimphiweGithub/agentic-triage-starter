@@ -240,6 +240,7 @@ def state():
 def set_guardian(setting: GuardianSetting):
     """Say whether a caregiver is enrolled. With none, reviews are addressed to the person themselves."""
     WORLD.guardian = setting.enrolled
+    runtime.save()
     return {"guardian": WORLD.guardian}
 
 
