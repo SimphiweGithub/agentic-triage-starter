@@ -326,25 +326,27 @@ A parse error goes straight to `record_failure`; an exception during
 **`load_queue`** resets and stores a list of messages. **`step`** processes the
 next `steps` messages and advances `position`.
 
-### `decide_review` (lines 213–238) — the caregiver's decision
+### `decide_review` (lines 213–239) — the caregiver's decision
 
 - **216–218** — a review can be decided once.
-- **219–222** — rejected: mark it and stop. The action never runs.
-- **223–224** — cooling-off: if the review has a `not_before` time and it has
+- **219–223** — rejected: mark it, tell the domain through `learn_from_review`
+  (line 221) so the same doubt is not raised again, save, and stop. The action
+  never runs.
+- **224–225** — cooling-off: if the review has a `not_before` time and it has
   not arrived, approval is refused with an error. Rejecting is always allowed.
-- **225** — approved.
-- **226–229** — if the review carries an action, run it with
+- **226** — approved.
+- **227–230** — if the review carries an action, run it with
   `execute_approved` and add the result to the incident's history.
-- **230–231** — add a line to the original decision's trace.
-- **232–233** — the tool failed: the review is marked `APPROVED_ACTION_FAILED`.
-- **234–236** — otherwise, if no other review is pending, move the incident to
+- **231–232** — add a line to the original decision's trace.
+- **233–234** — the tool failed: the review is marked `APPROVED_ACTION_FAILED`.
+- **235–237** — otherwise, if no other review is pending, move the incident to
   the state in `STATE_AFTER_APPROVED` for that action, through the state machine.
 
-### `move_state` (lines 240–250)
+### `move_state` (lines 241–251)
 
 A human moving an incident by hand. Refused while reviews are pending, and
 refused if the state machine says the move is illegal.
 
-### `snapshot` (lines 252–256)
+### `snapshot` (lines 253–257)
 
 Everything the dashboard needs, copied under the lock.

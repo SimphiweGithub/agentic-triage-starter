@@ -874,5 +874,24 @@ class PlainQuestionTests(unittest.TestCase):
             self.assertTrue(decision.proposed_action.details.get("ask"), decision.proposed_action.type)
 
 
+class LearningTests(unittest.TestCase):
+    def test_a_rejected_doubtful_warning_is_not_raised_again_for_that_sender(self):
+        runtime = TriageRuntime()
+        promo = "Your account has been recharged with R 5.00 and you have received R 5.00 FREE airtime."
+        answers = {"urgency": 0.0, "credentials": 0.0, "payment": 0.0, "subscription": 0.0, "prize": 0.84, "claim": 0.0,
+                   "premium": 0.0, "impersonation": 0.0, "money": 0.0, "advance_fee": 0.0}
+        fake = {key: {"type": "noul", "noul": value} for key, value in answers.items()}
+        fake["threat"] = {"type": "choice", "choice": "PRIZE_SCAM", "confidence": 0.9}
+        with patch.dict("os.environ", {"ENABLE_JEV": "1"}), patch("domain.gate.system_one", return_value=fake):
+            first = runtime.process(message("L1", promo))
+            self.assertEqual(first.action_outcome, ActionOutcome.HELD_FOR_REVIEW)
+            runtime.decide_review(first.review_id, approved=False)
+            again = runtime.process(message("L2", promo, timestamp="2026-10-09T06:00:00"))
+            scam = runtime.process(message("L3", "Urgent: you have won! Send a gift card voucher to claim now.", timestamp="2026-10-09T07:00:00"))
+        self.assertIsNone(again.proposed_action)
+        self.assertIn("fine", again.trace[1])
+        self.assertIsNotNone(scam.proposed_action)  # strong evidence from the same sender is still acted on
+
+
 if __name__ == "__main__":
     unittest.main()

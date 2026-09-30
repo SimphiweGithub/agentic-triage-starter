@@ -117,6 +117,15 @@ def _withdrawal(incident: IncidentRecord) -> Assessment:
                       labels={"threat": ThreatDomain.BENIGN.value})
 
 
+def learn_from_review(approved: bool, action: ActionProposal | None, report: RawInputReport) -> None:
+    """When a human rejects a warning or a block, remember the sender, so the same doubt is not raised again."""
+    if approved or action is None or action.type not in (ActionType.WARN_PERSON, ActionType.FLAG_SENDER):
+        return
+    sender = _signals(report)["sender"]
+    if sender:
+        WORLD.known_senders.add(sender)
+
+
 def _kind_wording(standard: str) -> str:
     """Optionally let the language model reword a warning. The standard wording is used if it is off, fails, or is unsafe."""
     if os.getenv("ENABLE_GEMINI") != "1":
@@ -144,6 +153,9 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     price_jump = any(finding.source == "mandate_history" and finding.weight > 0.3 for finding in findings)
     trusted = signals["merchant"] in WORLD.trusted and not price_jump
     risk = 0.0 if trusted else min(1.0, verdict.score + sum(finding.weight for finding in findings))
+    known = signals["sender"] in WORLD.known_senders and risk < CONTAIN_THRESHOLD
+    if known:  # a human said a doubtful warning from this sender was wrong; strong evidence still overrides that
+        risk = 0.0
     evidence = verdict.reasons + [finding.note for finding in findings if finding.weight > 0]
     established = bool(company) and company["age_days"] >= YOUNG_DAYS
     if is_mandate and not trusted and not (established and verdict.score < GATE_THRESHOLD):
@@ -158,7 +170,8 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     stay = IncidentState.TRIAGED if incident.status is IncidentState.NEW else incident.status
 
     if risk < GATE_THRESHOLD:
-        reason = "merchant is trusted by the person" if trusted else "nothing suspicious found"
+        reason = ("merchant is trusted by the person" if trusted else "a person said this sender's messages are fine" if known
+                  else "nothing suspicious found")
         return Assessment(severity=SeverityLevel.LOW, confidence=0.9, requested_state=stay, rationale=f"Benign: {reason}.",
                           labels={**labels, "threat": ThreatDomain.BENIGN.value})
 

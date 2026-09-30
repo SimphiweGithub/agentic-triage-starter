@@ -9,7 +9,7 @@ from core.correlator import Correlator
 from core.executor import execute_approved, execute_with_correction
 from core.fsm import transition_state
 from domain.enums import ActionOutcome, IncidentState, Relationship, SeverityLevel
-from domain.logic import assess, review_audience, risk_persists
+from domain.logic import assess, learn_from_review, review_audience, risk_persists
 from domain.policy import ACTION_IDENTITY, REPEATABLE_ACTIONS, STATE_AFTER_APPROVED, SUPERSEDING_ACTIONS
 from domain.schemas import ActionRecord, Assessment, DecisionRecord, IncidentRecord, RawInputReport, ReviewItem
 from domain.tools import reset_world
@@ -218,6 +218,7 @@ class TriageRuntime:
                 raise ValueError("Review already decided")
             if not approved:
                 item.status = "REJECTED"
+                learn_from_review(False, item.proposed_action, self.reports[item.report_id])
                 store.save(self)
                 return item
             if item.not_before and self.now() < datetime.fromisoformat(item.not_before):

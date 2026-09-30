@@ -26,6 +26,7 @@ class World:
     disputes: dict[str, dict] = field(default_factory=dict)    # company registration number -> dispute text, deadline, steps
     blocked: set[str] = field(default_factory=set)             # operators whose debits the bank is asked to refuse
     trusted: set[str] = field(default_factory=set)             # merchants the person confirmed as their own
+    known_senders: set[str] = field(default_factory=set)       # senders a human said were fine when a doubtful warning was held
     debits: dict[str, list[float]] = field(default_factory=dict)  # merchant -> amounts seen so far
     guardian: bool = field(default_factory=lambda: os.getenv("KINGUARD_GUARDIAN", "1") != "0")  # is a caregiver enrolled?
 
@@ -41,6 +42,7 @@ def world_state() -> dict:
     """The world as plain JSON values, for saving to disk. Sets become sorted lists."""
     return {"outbox": WORLD.outbox, "flagged": sorted(WORLD.flagged), "disputes": WORLD.disputes,
             "blocked": sorted(WORLD.blocked), "trusted": sorted(WORLD.trusted), "debits": WORLD.debits,
+            "known_senders": sorted(WORLD.known_senders),
             "guardian": WORLD.guardian}
 
 
@@ -49,6 +51,7 @@ def restore_world(saved: dict) -> None:
     WORLD.__init__()
     WORLD.outbox, WORLD.disputes, WORLD.debits = saved["outbox"], saved["disputes"], saved["debits"]
     WORLD.flagged, WORLD.blocked, WORLD.trusted = set(saved["flagged"]), set(saved["blocked"]), set(saved["trusted"])
+    WORLD.known_senders = set(saved.get("known_senders", []))  # older saved files do not have it
     WORLD.guardian = saved["guardian"]
 
 
