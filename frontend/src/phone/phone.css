@@ -46,3 +46,23 @@
 .phone .row .big { margin-top: 0; }
 .phone .question { padding: 0.9rem 1rem; border-radius: 0.6rem; border: 2px solid #1f6f4a; margin-bottom: 0.8rem; }
 .phone .question ol { padding-left: 1.2rem; }
+
+/* The dashboard's Tailwind reset also loads here and strips buttons and inputs, so the phone styles its own. */
+.phone button:not(.big) {
+  padding: 0.6rem 1rem;
+  margin: 0.4rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  border: 2px solid currentColor;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: inherit;
+}
+.phone input {
+  border: 1px solid #6b7c74;
+  border-radius: 0.5rem;
+  background: rgba(127, 127, 127, 0.12);
+  color: inherit;
+}
+.phone summary { cursor: pointer; font-weight: 600; }
+.phone .muted { word-break: break-word; }

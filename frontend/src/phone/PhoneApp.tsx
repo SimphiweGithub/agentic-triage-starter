@@ -33,7 +33,8 @@ interface Dispute {
 /** The protected person's phone: reads texts, sends them to the Scam Stop server, shows warnings and, with no guardian, asks them. */
 export function PhoneApp() {
   const [server, setServer] = useState(() => saved.get('server', 'http://localhost:8000'))
-  const [person, setPerson] = useState(() => saved.get('person', '')) // the person id from the dashboard; empty uses the shared one
+  const [person, setPerson] = useState(() => saved.get('person', '')) // the person id from the dashboard
+  const [personChecked, setPersonChecked] = useState(false) // nothing is sent until we know whose phone this is
   const [consented, setConsented] = useState(() => saved.get('consented', '') === 'yes')
   const [granted, setGranted] = useState(false)
   const [guardian, setGuardian] = useState(true)
@@ -118,8 +119,8 @@ export function PhoneApp() {
       setQuestions(mine.guardian ? [] : pending)
       setDisputes(mine.disputes)
       setNow(Date.now())
-    } catch {
-      // the sync status already says when the server cannot be reached
+    } catch (error) {
+      setStatus(`Could not load warnings: ${error instanceof Error ? error.message : String(error)}`)
     }
   }, [call])
 
@@ -147,6 +148,26 @@ export function PhoneApp() {
     await refresh()
   }
 
+  // With no person id set, ask the server whose phone this is. In development mode the caregiver's first
+  // person is used; once anyone is being looked after, the shared routes no longer answer.
+  useEffect(() => {
+    if (person) {
+      setPersonChecked(true)
+      return
+    }
+    fetch(`${server}/api/me`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((me: { people?: { id: string }[] } | null) => {
+        const first = me?.people?.[0]?.id
+        if (first) {
+          saved.set('person', first)
+          setPerson(first)
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setPersonChecked(true))
+  }, [server, person])
+
   // On start: if consent was given before, check access quietly.
   useEffect(() => {
     if (!consented) return
@@ -155,7 +176,7 @@ export function PhoneApp() {
 
   // Once access is granted: sync, then send each new text the moment it arrives.
   useEffect(() => {
-    if (!granted) return
+    if (!granted || !personChecked) return
     const first = setTimeout(sync, 0)
     const listening = SmsInbox.addListener('smsReceived', (sms) => {
       send([sms]).then(() => saved.set('since', String(sms.millis))).catch(() => setStatus('Could not reach Scam Stop; will retry'))
@@ -164,18 +185,18 @@ export function PhoneApp() {
       clearTimeout(first)
       listening.then((handle) => handle.remove())
     }
-  }, [granted, send, sync])
+  }, [granted, personChecked, send, sync])
 
   // Every few seconds: warnings, questions and disputes.
   useEffect(() => {
-    if (!granted) return
+    if (!granted || !personChecked) return
     const timer = setInterval(refresh, CHECK_EVERY_MS)
     const first = setTimeout(refresh, 0)
     return () => {
       clearInterval(timer)
       clearTimeout(first)
     }
-  }, [granted, refresh])
+  }, [granted, personChecked, refresh])
 
   if (!consented) {
     return (
@@ -258,7 +279,7 @@ export function PhoneApp() {
           <input value={server} onChange={(event) => { setServer(event.target.value); saved.set('server', event.target.value); filters.current = [] }} />
         </label>
         <label>
-          Person id (from the dashboard; leave empty on a single-person demo)
+          Person id (filled in from the dashboard; change it only to watch someone else)
           <input value={person} onChange={(event) => { setPerson(event.target.value.trim()); saved.set('person', event.target.value.trim()) }} />
         </label>
         <button type="button" onClick={sync}>Check now</button>
