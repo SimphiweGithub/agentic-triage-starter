@@ -48,9 +48,13 @@ adb install -r android\app\build\outputs\apk\debug\app-debug.apk
 adb reverse tcp:8000 tcp:8000
 ```
 
-4. On the laptop, `backend/.env` must allow the app's origin:
-   `CORS_ORIGINS=https://localhost,http://localhost`.
+4. On the laptop, `backend/.env` must allow the app's origin,
+   `CORS_ORIGINS=https://localhost,http://localhost`, and must contain
+   `KINGUARD_DEV_OPEN=1`: the app has no sign-in yet (see the limits below).
 5. Open Scam Stop on the phone, agree, and allow SMS access and notifications.
+6. To have the phone's texts appear under a person on the dashboard, copy that
+   person's id (it starts with `P`) into Settings → Person id. Left empty, the
+   phone uses the shared development runtime.
 
 To use Wi-Fi instead of USB, start the backend with `--host 0.0.0.0` and put
 the laptop's address, for example `http://192.168.1.20:8000`, under Settings
@@ -64,3 +68,7 @@ in the app.
   installed directly, not through the Play Store.
 - The caregiver dashboard with Google sign-in stays in the browser, because
   Google blocks sign-in inside app web views.
+- The phone app does not sign in. Every route except health now needs a Clerk
+  session, so the app only works against a server in development mode
+  (`KINGUARD_DEV_OPEN=1`). Pairing the phone to a person with its own device
+  key is the next piece to build before real use.

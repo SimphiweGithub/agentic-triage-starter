@@ -33,6 +33,7 @@ interface Dispute {
 /** The protected person's phone: reads texts, sends them to the Scam Stop server, shows warnings and, with no guardian, asks them. */
 export function PhoneApp() {
   const [server, setServer] = useState(() => saved.get('server', 'http://localhost:8000'))
+  const [person, setPerson] = useState(() => saved.get('person', '')) // the person id from the dashboard; empty uses the shared one
   const [consented, setConsented] = useState(() => saved.get('consented', '') === 'yes')
   const [granted, setGranted] = useState(false)
   const [guardian, setGuardian] = useState(true)
@@ -44,9 +45,11 @@ export function PhoneApp() {
   const [now, setNow] = useState(0)
   const filters = useRef<RegExp[]>([])
 
+  /** Calls about this person go to /api/people/{id}/...; `shared` routes that hold no data stay at /api. */
   const call = useCallback(
-    async <T,>(path: string, body?: unknown): Promise<T> => {
-      const response = await fetch(`${server}/api${path}`, {
+    async <T,>(path: string, body?: unknown, shared = false): Promise<T> => {
+      const base = person && !shared ? `${server}/api/people/${encodeURIComponent(person)}` : `${server}/api`
+      const response = await fetch(`${base}${path}`, {
         method: body === undefined ? 'GET' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -55,13 +58,13 @@ export function PhoneApp() {
       if (!response.ok) throw new Error(typeof answer.detail === 'string' ? answer.detail : `server answered ${response.status}`)
       return answer as T
     },
-    [server],
+    [server, person],
   )
 
   /** Never let a one-time code or password leave the phone: the server's own filter, applied here first. */
   const allowed = useCallback(async (messages: PhoneSms[]) => {
     if (filters.current.length === 0) {
-      const patterns = await call<{ withhold: string[]; flags: string }>('/privacy/patterns')
+      const patterns = await call<{ withhold: string[]; flags: string }>('/privacy/patterns', undefined, true)
       filters.current = patterns.withhold.map((pattern) => new RegExp(pattern, patterns.flags))
     }
     return messages.filter((sms) => sms.text.trim() && !filters.current.some((pattern) => pattern.test(sms.text)))
@@ -94,11 +97,10 @@ export function PhoneApp() {
   /** Warnings, the person's own questions and any disputes to lodge; a notification for anything new. */
   const refresh = useCallback(async () => {
     try {
-      const [outbox, health, pending, state] = await Promise.all([
+      const [outbox, pending, mine] = await Promise.all([
         call<Warning[]>('/outbox'),
-        call<{ guardian: boolean }>('/health'),
-        call<Question[]>('/reviews?status=PENDING&audience=PERSON'),
-        call<{ world: { disputes: Record<string, Dispute> } }>('/state'),
+        call<Question[]>('/person/reviews?status=PENDING'),
+        call<{ guardian: boolean; disputes: Dispute[] }>('/person/state'),
       ])
       const warned = Number(saved.get('warned', '0'))
       for (const [index, warning] of outbox.slice(warned).entries()) {
@@ -112,9 +114,9 @@ export function PhoneApp() {
       }
       saved.set('asked', [...asked].join(','))
       setWarnings([...outbox].reverse())
-      setGuardian(health.guardian)
-      setQuestions(health.guardian ? [] : pending)
-      setDisputes(Object.values(state.world.disputes))
+      setGuardian(mine.guardian)
+      setQuestions(mine.guardian ? [] : pending)
+      setDisputes(mine.disputes)
       setNow(Date.now())
     } catch {
       // the sync status already says when the server cannot be reached
@@ -254,6 +256,10 @@ export function PhoneApp() {
         <label>
           Scam Stop server
           <input value={server} onChange={(event) => { setServer(event.target.value); saved.set('server', event.target.value); filters.current = [] }} />
+        </label>
+        <label>
+          Person id (from the dashboard; leave empty on a single-person demo)
+          <input value={person} onChange={(event) => { setPerson(event.target.value.trim()); saved.set('person', event.target.value.trim()) }} />
         </label>
         <button type="button" onClick={sync}>Check now</button>
         <p className="muted">{status}</p>

@@ -5,6 +5,8 @@ registry and the mail filter are simulated: they keep the shape a real
 integration would have (typed input, a ToolResult that says whether it
 worked) but act on the in-memory `WORLD` and fixture data below.
 """
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -31,11 +33,45 @@ class World:
     guardian: bool = field(default_factory=lambda: os.getenv("KINGUARD_GUARDIAN", "1") != "0")  # is a caregiver enrolled?
 
 
-WORLD = World()
+_default_world = World()
+_active_world: ContextVar[World] = ContextVar("active_world", default=_default_world)
+
+
+class _ActiveWorld:
+    """`WORLD` for the domain code. It always means the world of the person being worked on.
+
+    Each person's runtime activates its own world while it processes anything, so the rules and
+    tools below never need to be told whose world they are in. Used on its own, it is the shared default.
+    """
+
+    def __getattr__(self, name):
+        return getattr(_active_world.get(), name)
+
+    def __setattr__(self, name, value):
+        setattr(_active_world.get(), name, value)
+
+
+WORLD = _ActiveWorld()
+
+
+def default_world() -> World:
+    """The shared world used when nobody asks for their own (the plain console, offline runs, tests)."""
+    return _default_world
+
+
+@contextmanager
+def use_world(world: World):
+    """Make `world` the one `WORLD` means, for everything run inside the block."""
+    token = _active_world.set(world)
+    try:
+        yield
+    finally:
+        _active_world.reset(token)
 
 
 def reset_world() -> None:
-    WORLD.__init__()
+    """Empty the active world."""
+    _active_world.get().__init__()
 
 
 def world_state() -> dict:
@@ -48,7 +84,7 @@ def world_state() -> dict:
 
 def restore_world(saved: dict) -> None:
     """Put a saved world back."""
-    WORLD.__init__()
+    reset_world()  # WORLD is a proxy for the active world, so its own __init__ would reset nothing
     WORLD.outbox, WORLD.disputes, WORLD.debits = saved["outbox"], saved["disputes"], saved["debits"]
     WORLD.flagged, WORLD.blocked, WORLD.trusted = set(saved["flagged"]), set(saved["blocked"]), set(saved["trusted"])
     WORLD.known_senders = set(saved.get("known_senders", []))  # older saved files do not have it

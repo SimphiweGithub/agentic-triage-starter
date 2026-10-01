@@ -31,8 +31,11 @@ def poll_once(connect: Callable[[], imaplib.IMAP4], handle: Callable[[str], obje
         connection.logout()
 
 
-def start_polling(handle: Callable[[str], object]) -> threading.Thread | None:
-    """Start a background thread that checks the mailbox every few seconds. Does nothing unless IMAP_HOST is set."""
+def start_polling(handle: Callable[[str], object], on_result: Callable[[str | None], None] | None = None) -> threading.Thread | None:
+    """Start a background thread that checks the mailbox every few seconds. Does nothing unless IMAP_HOST is set.
+
+    `on_result` hears None after each good check and an error description after a bad one.
+    """
     if not os.getenv("IMAP_HOST"):
         return None
     seconds = float(os.getenv("IMAP_POLL_SECONDS", "15"))
@@ -41,8 +44,12 @@ def start_polling(handle: Callable[[str], object]) -> threading.Thread | None:
         while True:
             try:
                 poll_once(connect_from_env, handle)
+                if on_result:
+                    on_result(None)
             except Exception as error:  # a mailbox problem must never stop the server
                 print(f"mailbox check failed: {type(error).__name__}: {error}")
+                if on_result:
+                    on_result(f"{type(error).__name__}")
             time.sleep(seconds)
 
     thread = threading.Thread(target=loop, daemon=True, name="mailbox")

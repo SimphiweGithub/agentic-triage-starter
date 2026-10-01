@@ -1,6 +1,10 @@
 .venv/
+.venv311/
 __pycache__/
 *.py[cod]
 decisions.jsonl
 data/
 .env
+
+backend/kinguard.db
+backend/kinguard.db-journal

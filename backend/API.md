@@ -6,9 +6,17 @@ collects two human answers: the person's "this is mine" and the caregiver's
 approve or reject.
 
 - Base address: `http://127.0.0.1:8000/api`
+- Unless a table shows a full `/people/{id}/...` path, calls about an incident,
+  review, intake or state use `/people/{id}` before the listed path. The caregiver
+  gets `{id}` from `GET /me` (`people`); the protected person gets their own id
+  from `GET /me` (`person`). Only development mode exposes unscoped calls.
 - Interactive documentation with every schema: `http://127.0.0.1:8000/docs`
-- All bodies are JSON. There is no authentication yet.
-- State is in memory. Restarting the server, or `POST /reset`, clears it.
+- API bodies are JSON, except the form-encoded WhatsApp webhook. Every route except `GET /health`,
+  `GET /invites/{token}` and `POST /intake/whatsapp`
+  needs a signed-in Clerk session: `Authorization: Bearer <token>` (see
+  [Signing in and roles](#signing-in-and-roles)).
+- Incidents and reviews are in memory per person. Restarting the server, or that person's
+  `POST /reset`, clears them. People, invites and mailbox status live in SQLite.
 
 ## Running it
 
@@ -22,8 +30,10 @@ Two ways to connect a front end:
 
 1. **Same origin.** Put the built front end in `static/` and it is served from
    the same port. Nothing else to configure.
-2. **Separate dev server.** Set `CORS_ORIGINS` in `.env` to the front end's
-   address, for example `CORS_ORIGINS=http://localhost:5173`, and restart.
+2. **Vite dev server.** The sibling `frontend/` app proxies `/api` to this
+   backend, so no CORS setting is needed for local development.
+3. **Separate deployment.** Set `CORS_ORIGINS` in `.env` to the front end's
+   address and `VITE_API_URL` to the backend origin when building the front end.
 
 ## The three screens and the calls they need
 
@@ -44,8 +54,11 @@ withheld: nothing is stored and no decision is made. Show that as "not kept".
 
 | Call | Returns |
 |---|---|
-| `GET /outbox` | `[{"incident_id": "I0001", "message": "..."}]`, oldest first |
+| `GET /people/{id}/outbox` | `[{"incident_id": "I0001", "message": "..."}]`, oldest first; answered warnings are hidden |
 | `POST /incidents/{incident_id}/feedback` with `{"legitimate": true}` | A decision |
+| `GET /people/{id}/person/reviews?status=PENDING` | Reviews addressed to the person |
+| `GET /people/{id}/person/state` | `{"guardian": true, "disputes": [{"text", "dispute_by", "steps"}]}`: whether a caregiver decides, and disputes to lodge |
+| `POST /people/{id}/reviews/{review_id}/decision` with `{"approved": true}` | The updated person review; approval respects `not_before` |
 
 `message` is written for the person and is safe to show as it is. When they
 answer "this is mine", post the feedback. For a low-risk incident the agent
@@ -55,7 +68,9 @@ and the returned decision has `requires_human_approval: true`.
 ### Guardian or no guardian
 
 `POST /settings/guardian` with `{"enrolled": false}` switches to solo mode,
-for a person with nobody to ask. `GET /health` reports the current setting.
+for a person with nobody to ask. `GET /people/{id}/person/state` reports the
+current setting to the person's phone, and `GET /people/{id}/state` to the
+caregiver.
 
 | | Guardian enrolled | No guardian |
 |---|---|---|
@@ -210,16 +225,25 @@ delivered at once.
 
 ## Android app (Capacitor)
 
-An Android app reading the phone's SMS inbox uses three calls:
+An Android app reading the phone's SMS inbox uses these calls:
 
-1. `GET /privacy/patterns` once at start-up. It returns the patterns for
+1. `GET /api/privacy/patterns` once at start-up. It needs no person and no
+   session. It returns the patterns for
    one-time codes and messages that hand over a password or recovery code,
    as strings with the `i` flag. Apply them **on the phone** and never send a
    matching message. The server applies the same filter again, but the
    privacy promise only holds if those messages never leave the device.
-2. `POST /intake/share/batch` for the first sync: a list of
-   `{"text", "sender", "channel": "sms", "timestamp"}`, oldest first.
-3. `POST /intake/share` for each new message after that.
+2. `POST /api/people/{id}/intake/share/batch` for the first sync and for each
+   new message: a list of `{"text", "sender", "channel": "sms", "timestamp"}`,
+   oldest first.
+3. `GET /api/people/{id}/outbox`, `/person/reviews?status=PENDING` and
+   `/person/state` every few seconds, for warnings, questions and disputes.
+
+**Signing in from the phone is not built yet.** These routes need the
+person's Clerk session, and the app has no sign-in screen, so today the app
+only works against a server started with `KINGUARD_DEV_OPEN=1`. Put the
+person's id from the dashboard under Settings in the app; left empty, it uses
+the shared development runtime.
 
 Always send `timestamp`, the time the phone received the message in ISO
 format. The message's id is built from it, so sending the same message again
@@ -237,28 +261,23 @@ Add the app's origin to `CORS_ORIGINS` in `backend/.env`:
 ones. Plain `http` to the laptop also needs cleartext allowed in the app's
 Capacitor configuration.
 
-## Checking Gmail automatically
-
-After the user signs in with Google, call `POST /gmail/watch` once (with the
-same `Authorization` header as the other Gmail calls). The server then checks
-that inbox every 60 seconds and takes in each new email by itself; new
-incidents appear in `GET /incidents` and `GET /state` as usual.
-`GET /gmail/watch` returns `watching`, `last_check`, `last_error` and
-`taken_in`, for a status line on the Channels tab. `DELETE /gmail/watch` stops it.
-
 ## Saved state
 
-The backend now saves everything to `backend/data/state.json` after each
-change and loads it on start-up, so restarting the server no longer clears
-incidents, reviews or the action history. `POST /reset` still empties it.
+The backend saves each person's incidents, reviews, action history and world
+to `backend/data/people/<person id>.json` after each change (the development
+runtime uses `backend/data/state.json`) and loads them on start-up, so a
+restart clears nothing. People, invites and mailboxes are kept in SQLite
+(`backend/kinguard.db`). `POST /reset` still empties one person's runtime.
 
 ## WhatsApp gateway (optional)
 
-`POST /intake/whatsapp` accepts the form a WhatsApp gateway posts when a
-message arrives (Twilio's format: `From` and `Body`). Pointing a gateway's
-webhook at it makes forwarded WhatsApp messages arrive without anyone calling
-the API. It needs a gateway account and a public address for this server, and
-has only been tested with a simulated post.
+`POST /people/{id}/intake/whatsapp` accepts Twilio's form fields (`From` and
+`Body`). Set `TWILIO_AUTH_TOKEN` in `backend/.env`; outside development mode,
+requests without a valid `X-Twilio-Signature` receive `403`, and an unset token
+returns `503`. Set `TWILIO_PUBLIC_ORIGIN` to the public scheme and host Twilio
+calls when a proxy changes the request's internal URL. The validator uses the
+full path, query string and all form fields. This has only been tested with
+signed simulated posts, not a live gateway. [Twilio's signature guidance](https://www.twilio.com/docs/usage/webhooks/webhooks-security).
 
 ## Live inbox
 
@@ -268,31 +287,72 @@ as `POST /intake/email` would. Nothing changes for the front end: the new
 incident simply appears in `GET /incidents`. `GET /health` reports whether the
 mailbox and the models are switched on.
 
-## Gmail
+## Signing in and roles
 
-The only routes that need a signed-in user. The front end signs the user in
-with Clerk, then sends the session token on each call:
+The front end signs users in with Clerk and sends the session token on every
+call. There are two roles, stored on the server and on the Clerk user's public
+metadata (`role`):
 
-```
-Authorization: Bearer <await getToken() from @clerk/react>
-```
-
-| Call | Returns |
-|---|---|
-| `GET /gmail/messages?max_results=10&q=in:inbox` | The newest emails: `[{id, thread_id, sender, subject, date, snippet}]`. `q` is any Gmail search, for example `is:unread`. |
-| `POST /gmail/messages/{id}/intake` | Takes that email in exactly as `POST /intake/email` would; returns a decision or `withheld`. |
+| Role | Who | What they may call |
+|---|---|---|
+| `caregiver` | The person who looks after someone | Routes scoped to every person they look after, including caregiver reviews |
+| `person` | The protected person, who connected their own Gmail | `GET /me`, `POST /me/disconnect`, their outbox and feedback, their pending reviews and decisions |
+| none | Signed in but not linked to anyone yet | `GET /me`, `POST /people`, `POST /invites/{token}/accept` |
 
 | Code | Meaning |
 |---|---|
-| `401` | No valid Clerk session, or Google refused the token |
-| `403` | No Google account connected, or connected without Gmail read access |
-| `502` | Gmail returned an error |
+| `401` | No valid Clerk session |
+| `403` | Signed in, but not allowed: not linked yet, or the wrong role |
+| `404` | The person, invite or mailbox is not yours, or does not exist |
 | `503` | `CLERK_SECRET_KEY` is not set on the server |
 
-For this to work, the Clerk application needs Google sign-in with the scope
+One caregiver may look after several people. Each person's incidents, reviews
+and simulated world are separate in memory. Routes under `/people/{id}` check
+that the caller is linked to that person.
+
+## People, invites and mailboxes
+
+The caregiver never reads the person's mail. The person connects their own
+Gmail once, from a link; the server then scans it in the background and the
+caregiver only ever sees alerts.
+
+| Call | Who | Returns |
+|---|---|---|
+| `GET /me` | anyone signed in | `{user_id, role, person, people, can_add_person, mailbox}`. `people` lists a caregiver's people; `mailbox` is the person's own Gmail state |
+| `POST /people` with `{"name": "...", "relation": "..."}` | caregiver or unlinked user | The same as `GET /me`. An unlinked caller becomes the caregiver |
+| `GET /people/{id}/mailboxes` | caregiver | `[{id, kind, label, status, connected_at, last_checked, last_error, checked}]` |
+| `POST /people/{id}/invites` | caregiver | `{token, created_at, expires_at}`. Single use, valid 7 days |
+| `GET /people/{id}/invites` | caregiver | Invites still waiting |
+| `POST /people/{id}/invites/{token}/cancel` | caregiver | `{status: "cancelled"}` |
+| `GET /invites/{token}` | **nobody: no sign-in** | `{valid, problem, person_name}`. `person_name` is set only when the link works |
+| `POST /invites/{token}/accept` | the person, signed in with Google | The same as `GET /me`. A person already linked to this same profile may reconnect. An account linked elsewhere gets `409` |
+| `POST /me/disconnect` | the person | The same as `GET /me`. Stops scanning at once and asks Google to revoke the token |
+
+**Mailbox `kind`** is `gmail` (the person's own, one per person) or `forwarded`
+(the server's own IMAP mailbox, see Live inbox). **`status`**:
+
+| Status | Meaning | What to show |
+|---|---|---|
+| `connected` | Being checked | "Last checked 2 minutes ago" |
+| `problem` | The token was refused or revoked, or Gmail has been unreachable for over 15 minutes. `last_error` says why | A problem for the caregiver, with "send a new invite link" |
+| `disconnected` | The person disconnected. Only a new invite reconnects it | A problem for the caregiver |
+
+`checked` counts messages with a verdict. The server keeps nothing else about
+mail judged safe. A flagged email keeps its text until its alert is resolved.
+
+**Scanning.** The first scan looks back 14 days; after that the server checks
+every minute (`SCAN_SECONDS`). A one-time code is withheld, as for every other
+intake. A short outage is retried quietly and only becomes a `problem` after 15
+minutes.
+
+**Setting up Google.** The Clerk application needs Google sign-in with the scope
 `https://www.googleapis.com/auth/gmail.readonly`, using your own Google OAuth
 credentials, because Clerk's shared development credentials cannot add scopes.
-`GET /health` reports `"gmail": true` when the server has a Clerk key.
+That scope is restricted: until Google verifies the app, it runs in testing
+mode, limited to 100 listed test users, and refresh tokens expire after about
+seven days, so a connection needs re-signing weekly (it then shows as a
+`problem`). Verification is a separate step before real users. `GET /health`
+reports `"gmail": true` when the server has a Clerk key.
 
 ## Demo controls
 
@@ -319,5 +379,6 @@ message in it demonstrates.
 - The bank, company registry and sender blocklist are simulated. Nothing
   leaves the machine except the masked message text sent to the models and
   domain names sent to the public registration lookup.
-- There is one protected person and no login. Do not expose this server
-  beyond the demo machine.
+- Each protected person has a separate runtime. Sign-in is on by default. `KINGUARD_DEV_OPEN=1`
+  turns it off for the plain console and local scripts; never set it on a server
+  anyone else can reach.

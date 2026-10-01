@@ -14,7 +14,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-The sibling `frontend/` folder is reserved for a separately built front end against `API.md`; interactive API documentation is at `http://127.0.0.1:8000/docs`. The page at `http://127.0.0.1:8000` is a plain developer console for watching the engine.
+The sibling `frontend/` folder contains the React product app built against `API.md`; interactive API documentation is at `http://127.0.0.1:8000/docs`. The page at `http://127.0.0.1:8000` is a plain developer console for watching the engine. See the frontend README for its setup.
 
 ```powershell
 .\.venv\Scripts\python.exe runner.py samples\kinguard.jsonl --output decisions.jsonl
@@ -59,11 +59,15 @@ All off by default. Set them as environment variables before starting the server
 | Variable | Effect |
 |---|---|
 | `KINGUARD_LIVE_LOOKUPS=1` | Domain age is looked up for real through RDAP, falling back to fixture data. Tested against live domains; `.co.za` is not covered by RDAP. |
-| `ENABLE_JEV=1` with `TYPESAFE_API_KEY` | The gate also asks Jev four yes/no questions and the threat type. Jev can add suspicion, never remove it. Measured on held-out SMS: rules alone caught 53%, rules plus Jev 87%. |
+| `ENABLE_JEV=1` with `TYPESAFE_API_KEY` | The gate also asks Jev twelve yes/no questions and the threat type. Jev can add suspicion, never remove it. On held-out UK SMS: rules alone catch 48%, rules plus Jev 67%. On our own South African texts (which the rules were written from): 16 of 16 with 3 false alarms, 9 with Jev. See RATIONALE.md section 6. |
 | `ENABLE_GEMINI=1` with `GEMINI_API_KEY` | Gemini rewords the warning shown to the person. The result is rejected if it contains a number, link or address. `GEMINI_MODEL` is optional (default `gemini-3.5-flash-lite`). |
 
 | `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD` | A live inbox: unread emails in a mailbox created for Scam Stop are taken in every `IMAP_POLL_SECONDS` (default 15). Tested with a stand-in mailbox only. |
-| `CLERK_SECRET_KEY` | Enables the Gmail routes (`/api/gmail/...`). The server checks the user's Clerk session and asks Clerk for their Google token. Tested with stand-ins only. |
+| `CLERK_SECRET_KEY` | Turns sign-in on for every route except `/health` and the WhatsApp webhook, and starts the background scan of the protected person's Gmail. The server checks the caller's Clerk session and asks Clerk for the person's Google token. Tested with stand-ins only. |
+| `SCAN_SECONDS` | How often each connected Gmail is checked (default 60). |
+| `KINGUARD_DB` | The SQLite file for people, invites, mailboxes and scanned-message verdicts (default `backend/kinguard.db`, ignored by git). |
+| `KINGUARD_DEV_OPEN=1` | Development only: skips sign-in so the plain console and local scripts work. Never on a reachable server. |
+| `KINGUARD_STATE_FILE` | Where incidents, reviews and the world are saved after every change: `data/state.json` for the shared runtime, `data/people/<id>.json` for each person. Empty keeps them in memory only. |
 
 Every model call has a rule-based fallback, and model output passes through the same state machine, guardrails and executor as the rules.
 
