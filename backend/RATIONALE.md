@@ -171,6 +171,7 @@ Every fifth message was held out; rules were written from the other four fifths.
 | Seven rules plus Jev (real API calls) | Held-out fifth | 135 of 156 (87%) | 6 of 959 |
 | Twelve rules, after the South African changes below | Held-out fifth | 75 of 156 (48%) | 3 of 959 |
 | Twelve rules plus Jev, narrowed questions | Held-out fifth | 104 of 156 (67%) | 7 of 959 |
+| Twelve rules, "per min" tariffs no longer premium | Held-out fifth | 74 of 156 (47%) | 3 of 959 |
 
 What we learned: rules written from intuition missed almost everything in
 real spam. Jev recovers much of what the rules miss, at about 0.4 seconds
@@ -186,6 +187,8 @@ instead.
 | Ten rules plus Jev, before | 5 of 16 | 49 |
 | Twelve rules | 16 of 16 | 3 |
 | Twelve rules plus Jev, narrowed questions | 16 of 16 | 9 |
+| The whole agent with real senders, rules only (after the sender changes below) | 16 of 16 | 2 |
+| The whole agent with real senders, rules plus Jev | 16 of 16 | 8 |
 
 The first two rows are why we changed anything. What was wrong:
 
@@ -207,6 +210,25 @@ The first two rows are why we changed anything. What was wrong:
 - Jev's `claim` and `premium` questions said yes to every "Dial *123# to buy
   a bundle" advert. Narrowing them removed 16 of Jev's false alarms here and
   cost 27 UK catches. We chose South Africa.
+
+**Who sends South African texts.** Checking the senders showed that 108 of
+the 132 ordinary texts and all 16 scams came from rotating bulk-SMS numbers
+(`+2781160...`), a different number almost every time. Trusting a company's
+number is therefore impossible: the scammers use the same range. Three changes
+followed:
+
+- Fixed company sender names and short codes (`MTN136`, `MyTelkom`, `MoNice`,
+  `SA_Gov`, `181`, `184`) clear a single weak signal; strong evidence is still
+  flagged, because a name can be faked.
+- A network's price notice ("75c per min") no longer counts as premium-rate.
+- Learning from a rejected warning now also remembers the company named at the
+  start of the text ("Telkom: ..."), because the number changes every time.
+
+Of the 2 remaining false alarms with rules only, one is a job scam we labelled
+as ordinary by mistake, and one is a real R1-a-day subscription. Jev adds 6
+more: three college "account overdue" reminders, and three credit offers
+(Capitec education loans, Telkom Emergency Top-Up). Those last three are what
+the credit-offer warning is for, so they are arguably right.
 
 The honest caveat: every change was chosen by looking at these same 148
 messages, so 16 of 16 is a training score, not evidence. It shows the rules

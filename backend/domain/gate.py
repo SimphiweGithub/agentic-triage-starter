@@ -30,7 +30,9 @@ TEXT_RULES: dict[str, tuple[str, float, re.Pattern]] = {
     "claim": ("tells the reader to call or text a number to claim", 0.3,
               re.compile(r"\b(to claim|claim (your|ur|now|code)|call (now|free|0\d{9,})|(txt|text|send|sms) \w+ to \d{4,6})\b", re.I)),
     "premium": ("premium-rate number or paid-message terms", 0.3,
-                re.compile(r"(\b\d{2,3}p\b|\bR ?\d+(\.\d{2})? ?(/|per ) ?(day|week|wk|msg|sms|min)|\bper (min|msg|sms|week|wk|text)\b|/min|/msg|/wk"
+                # A charge per message, day or week, or a premium number. Not a network's ordinary tariff: "75c per min" is
+                # a price notice, so a bare "per min" no longer counts; a rand or pound amount per unit still does.
+                re.compile(r"(\b\d{2,3}p\b|(\bR|£) ?\d+(\.\d{2})? ?(/|per ) ?(day|week|wk|msg|sms|min)|\bper (msg|sms|week|wk|text)\b|/msg|/wk"
                            r"|\bstd (txt|msg|rate)\b|\b09\d{8,9}\b|\b08[47]\d{7,9}\b)", re.I)),
     "impersonation": ("claims to be someone the reader knows, on a new number", 0.2,
                       re.compile(r"\b(new number|changed my number|lost my phone|phone (is|was) (broken|stolen)|this is my new)\b", re.I)),

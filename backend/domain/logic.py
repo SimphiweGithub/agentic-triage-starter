@@ -1,6 +1,7 @@
 """Scam Stop decisions: how a message is read, linked to an incident, and assessed."""
 from datetime import datetime, timedelta, timezone
 import os
+import re
 from typing import Any
 
 from domain.enums import ActionOutcome, ActionType, IncidentState, ServiceDomain, SeverityLevel, ThreatDomain
@@ -9,7 +10,7 @@ from domain.gate import ask_jev, gate
 from domain.investigate import investigate
 from domain.language import write_person_message
 from domain.policy import (CONTAIN_THRESHOLD, COOLING_OFF_SECONDS, DISPUTE_WINDOW_DAYS, GATE_THRESHOLD, HIGH_AMOUNT,
-                           PROTECTED_DOMAINS, REVIEW_HOLD_SEVERITIES, YOUNG_DAYS)
+                           OFFICIAL_SENDER_IDS, PROTECTED_DOMAINS, REVIEW_HOLD_SEVERITIES, YOUNG_DAYS)
 from domain.schemas import ActionProposal, Assessment, IncidentRecord, RawInputReport
 from domain.tools import WORLD, identify_operator
 
@@ -24,6 +25,9 @@ BLOCK_HOW: dict[str, str] = {
     "sms": " To stop their texts, block the number in your Messages app.",
     "email": " To stop their emails, block the sender in Gmail.",
 }
+# The company a text names at its start, as in "Telkom: Your bundle...". Bulk texts come from a different number each
+# time, so learning only the number would almost never match again.
+BRAND_PATTERN = re.compile(r"^\s*([A-Z][A-Za-z0-9'&. -]{1,30}?)\s*:")
 TIMESTAMP_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%Y/%m/%d %H:%M")
 
 
@@ -131,13 +135,21 @@ def _withdrawal(incident: IncidentRecord) -> Assessment:
                       labels={"threat": ThreatDomain.BENIGN.value})
 
 
+def sender_keys(report: RawInputReport) -> set[str]:
+    """Who a message is from, as the agent remembers it: the sender, and the company named at the start of the text."""
+    sender = _signals(report)["sender"]
+    keys = {sender} if sender else set()
+    named = BRAND_PATTERN.match(report.payload or "")
+    if named:
+        keys.add("brand:" + named.group(1).strip().lower())
+    return keys
+
+
 def learn_from_review(approved: bool, action: ActionProposal | None, report: RawInputReport) -> None:
-    """When a human rejects a warning or a block, remember the sender, so the same doubt is not raised again."""
+    """When a human rejects a warning or a block, remember the sender and the company it names, so the same doubt is not raised again."""
     if approved or action is None or action.type not in (ActionType.WARN_PERSON, ActionType.FLAG_SENDER):
         return
-    sender = _signals(report)["sender"]
-    if sender:
-        WORLD.known_senders.add(sender)
+    WORLD.known_senders.update(sender_keys(report))
 
 
 def _kind_wording(standard: str) -> str:
@@ -172,8 +184,9 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     price_jump = any(finding.source == "mandate_history" and finding.weight > 0.3 for finding in findings)
     trusted = signals["merchant"] in WORLD.trusted and not price_jump
     risk = 0.0 if trusted else min(1.0, verdict.score + sum(finding.weight for finding in findings))
-    known = signals["sender"] in WORLD.known_senders and risk < CONTAIN_THRESHOLD
-    if known:  # a human said a doubtful warning from this sender was wrong; strong evidence still overrides that
+    known = bool(sender_keys(report) & WORLD.known_senders) and risk < CONTAIN_THRESHOLD
+    official = signals["sender"].lstrip("+") in OFFICIAL_SENDER_IDS and risk < CONTAIN_THRESHOLD
+    if known or official:  # a human cleared this sender, or it is a company's own sender name; strong evidence still overrides
         risk = 0.0
     evidence = verdict.reasons + [finding.note for finding in findings if finding.weight > 0]
     shared_provider = signals["sender_domain"] in PROTECTED_DOMAINS
@@ -197,7 +210,7 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
 
     if risk < GATE_THRESHOLD:
         reason = ("merchant is trusted by the person" if trusted else "a person said this sender's messages are fine" if known
-                  else "nothing suspicious found")
+                  else "a company's own sender name, with only weak signals" if official else "nothing suspicious found")
         return Assessment(severity=SeverityLevel.LOW, confidence=0.9, requested_state=stay, rationale=f"Benign: {reason}.",
                           labels={**labels, "threat": ThreatDomain.BENIGN.value})
 

@@ -292,3 +292,17 @@ Which of these are measured:
 `PROTECTED_DOMAINS` — shared mail providers. Blocking `gmail.com` would block
 every legitimate Gmail sender, so the mail filter tool refuses it, and a flag
 must name one address.
+
+### Official sender names (line 84)
+
+`OFFICIAL_SENDER_IDS` — fixed SMS sender names and short codes seen on a real
+South African phone that only the company itself uses: `MTN136`, `MyTelkom`,
+`MoNice`, `SA_Gov`, `181` and `184`. Compared in lower case without a leading
+`+`. From one of these, a single weak signal is ignored (`domain/logic.py`).
+Strong evidence, at or above `CONTAIN_THRESHOLD`, is still flagged, because a
+sender name can be faked.
+
+Most company texts are **not** covered. They arrive from rotating bulk-SMS
+numbers (`+2781160...`) that scammers use too: on our labelled phone texts,
+108 of 132 ordinary texts and all 16 scams came from that range. So a number
+cannot be trusted, only these fixed names.

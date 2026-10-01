@@ -1447,5 +1447,38 @@ class LearningTests(unittest.TestCase):
         self.assertIsNotNone(scam.proposed_action)  # strong evidence from the same sender is still acted on
 
 
+def sms(report_id: str, text: str, sender: str, timestamp: str = "2026-10-02T06:00:00") -> RawInputReport:
+    return parse_record({"report_id": report_id, "timestamp": timestamp, "source": "sms", "payload": text, "metadata": {"sender": sender}})
+
+
+class SouthAfricanSenderTests(unittest.TestCase):
+    """Company texts mostly arrive from rotating bulk numbers that scammers use too; a few come from fixed names."""
+    SUBSCRIPTION = "Telkom: Win tickets to the festival! Dial *180*6# @ R1/day. First day FREE."
+
+    def test_a_network_tariff_notice_is_not_a_premium_charge(self):
+        notice = "Telkom: out of bundle voice rates increase from 70c to 75c per min from 1 August."
+        self.assertLess(gate(notice, extract_signals(notice, {})).score, 0.3)
+        self.assertGreaterEqual(gate(self.SUBSCRIPTION, extract_signals(self.SUBSCRIPTION, {})).score, 0.3)
+
+    def test_a_companys_own_sender_name_clears_weak_signals_but_not_strong_ones(self):
+        judged = lambda report: TriageRuntime().process(report).trace[1]  # each message on its own, so none is a duplicate
+        self.assertTrue(judged(sms("O1", self.SUBSCRIPTION, "MyTelkom")).startswith("Benign: a company's own sender name"))
+        self.assertTrue(judged(sms("O2", self.SUBSCRIPTION, "+2781160282011227")).startswith("Risk"))  # bulk number: no trust
+        phishing = "Urgent: your account is suspended. Verify your PIN at http://telkom-help.example today."
+        self.assertTrue(judged(sms("O3", phishing, "MyTelkom")).startswith("Risk"))  # a sender name can be faked
+
+    def test_a_cleared_warning_is_remembered_by_company_not_only_by_the_rotating_number(self):
+        runtime = TriageRuntime()
+        first = runtime.process(sms("B1", self.SUBSCRIPTION, "+2781160282011227"))
+        self.assertEqual(first.action_outcome, ActionOutcome.HELD_FOR_REVIEW)
+        runtime.decide_review(first.review_id, approved=False)
+        later = self.SUBSCRIPTION.replace("festival", "concert")
+        again = runtime.process(sms("B2", later, "+2781160933200100", timestamp="2026-10-09T06:00:00"))  # same company, new number
+        self.assertIsNone(again.proposed_action)
+        self.assertIn("fine", again.trace[1])
+        other = runtime.process(sms("B3", later.replace("Telkom:", "Ringa:"), "+2781160999999999", timestamp="2026-10-09T07:00:00"))
+        self.assertTrue(other.trace[1].startswith("Risk"))  # another company is not covered by Telkom's clearance
+
+
 if __name__ == "__main__":
     unittest.main()

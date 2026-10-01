@@ -76,3 +76,9 @@ COOLING_OFF_SECONDS = 24 * 60 * 60
 # Shared mail providers. Flagging one of these domains would block legitimate senders,
 # so the mail filter refuses and the agent must narrow the flag to a single address.
 PROTECTED_DOMAINS: set[str] = {"gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com"}
+
+# Fixed SMS sender names and short codes, seen on a real South African phone, that only the company itself uses.
+# Most company texts arrive from rotating bulk numbers (+2781160...), which scammers use too, so those cannot be trusted.
+# From a name below, one weak signal is ignored; strong evidence (risk at CONTAIN_THRESHOLD or above) is still flagged,
+# because a sender name can be faked. Compared in lower case, without a leading +.
+OFFICIAL_SENDER_IDS: set[str] = {"mtn136", "mytelkom", "monice", "sa_gov", "181", "184"}
