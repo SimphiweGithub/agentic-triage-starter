@@ -28,3 +28,27 @@ export const UserButton = LOCAL_DEMO ? LocalUserButton : Clerk.UserButton
 export const SignInButton = (LOCAL_DEMO ? Passthrough : Clerk.SignInButton) as typeof Clerk.SignInButton
 export const SignUpButton = (LOCAL_DEMO ? Passthrough : Clerk.SignUpButton) as typeof Clerk.SignUpButton
 export const useAuth = LOCAL_DEMO ? () => ({ getToken: async () => null as string | null }) : Clerk.useAuth
+
+const GMAIL_READ = 'https://www.googleapis.com/auth/gmail.readonly'
+
+/**
+ * Sends the signed-in person back to Google asking only for permission to read their Gmail. Needed when they
+ * signed in but did not tick Gmail access, or signed up without Google: Google remembers the earlier answer
+ * and does not ask again by itself. Null in local demo mode, where there is no Google sign-in.
+ */
+function useClerkGrantGmail(): (() => Promise<void>) | null {
+  const { user } = Clerk.useUser()
+  if (!user) return null
+  return async () => {
+    const redirectUrl = window.location.href
+    const google = user.externalAccounts.find((account) => account.provider === 'google')
+    const pending = google
+      ? await google.reauthorize({ additionalScopes: [GMAIL_READ], redirectUrl })
+      : await user.createExternalAccount({ strategy: 'oauth_google', additionalScopes: [GMAIL_READ], redirectUrl })
+    const next = pending.verification?.externalVerificationRedirectURL
+    if (!next) throw new Error('Google did not return a sign-in page. Try again.')
+    window.location.href = next.toString()
+  }
+}
+
+export const useGrantGmail: () => (() => Promise<void>) | null = LOCAL_DEMO ? () => null : useClerkGrantGmail

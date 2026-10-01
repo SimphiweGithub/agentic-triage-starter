@@ -1,4 +1,4 @@
-import { SignInButton, SignUpButton, UserButton } from './auth'
+import { SignInButton, SignUpButton, UserButton, useGrantGmail } from './auth'
 import { MailCheck, ShieldCheck } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -57,6 +57,8 @@ export function SignedOutScreen() {
 export function ConnectScreen({ token, signedIn, onDone }: { token: string; signedIn: boolean; onDone: () => void }) {
   const [look, setLook] = useState<InviteLook | null>(null)
   const [busy, setBusy] = useState(false)
+  const [needsGrant, setNeedsGrant] = useState(false) // signed in, but Google did not give Gmail read access
+  const grantGmail = useGrantGmail()
 
   useEffect(() => {
     let live = true
@@ -75,8 +77,24 @@ export function ConnectScreen({ token, signedIn, onDone }: { token: string; sign
       toast.success('Your Gmail is connected. Thank you.')
       onDone()
     } catch (caught) {
-      toast.error(caught instanceof Error ? caught.message : 'Could not connect. Try again.')
+      const message = caught instanceof Error ? caught.message : 'Could not connect. Try again.'
+      if (/Gmail read access|No Google account/.test(message) && grantGmail) {
+        setNeedsGrant(true)
+      } else {
+        toast.error(message)
+      }
     } finally {
+      setBusy(false)
+    }
+  }
+
+  async function grant() {
+    if (!grantGmail) return
+    setBusy(true)
+    try {
+      await grantGmail() // leaves for Google, and comes back to this page
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Could not open Google. Try again.')
       setBusy(false)
     }
   }
@@ -117,7 +135,15 @@ export function ConnectScreen({ token, signedIn, onDone }: { token: string; sign
             You can stop this at any time, with one button.
           </li>
         </ul>
-        {signedIn ? (
+        {signedIn && needsGrant ? (
+          <div className="grid gap-3 rounded-lg bg-warn-soft p-4">
+            <strong className="text-warn">Google has not given Scam Stop permission to read your email yet.</strong>
+            <span className="text-base">On the next screen, tick the box for <strong>Read all your Gmail</strong>, then continue. After that, press Connect my Gmail again.</span>
+            <Button className="h-12 w-full text-lg" disabled={busy} onClick={grant}>
+              {busy ? 'Opening Google…' : 'Give Gmail permission'}
+            </Button>
+          </div>
+        ) : signedIn ? (
           <Button className="h-12 w-full text-lg" disabled={busy} onClick={connect}>
             {busy ? 'Connecting…' : 'Connect my Gmail'}
           </Button>
