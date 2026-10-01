@@ -110,14 +110,17 @@ def review_audience() -> str:
 
 
 def _withdrawal(incident: IncidentRecord) -> Assessment:
-    """The person says the charge or sender is legitimate: undo our actions, unless the evidence was strong."""
+    """The person says the charge or sender is legitimate. With a guardian enrolled, the guardian decides whether to
+    undo anything; the person has no decision power. With none, a low-risk answer is taken and a high-risk one waits."""
     strong = incident.severity in REVIEW_HOLD_SEVERITIES
     action = ActionProposal(type=ActionType.WITHDRAW, service=ServiceDomain.BANK,
                             details={"merchant": incident.labels.get("merchant", "")})
-    if strong and WORLD.guardian:
+    if WORLD.guardian:
         return Assessment(severity=incident.severity, confidence=0.5, requested_state=incident.status, proposed_action=action,
-                          rationale="The person says this is legitimate, but the evidence against it was strong.",
-                          review_reason="Person confirmed a high-risk sender as legitimate; check for coercion")
+                          rationale=("The person says this is legitimate, but the evidence against it was strong." if strong
+                                     else "The person says this is theirs. The caregiver decides whether to undo the warning."),
+                          review_reason=("Person confirmed a high-risk sender as legitimate; check for coercion" if strong
+                                         else "The person says this is theirs; undo the warning?"))
     if strong:  # nobody else to ask, so slow the decision down instead
         return Assessment(severity=incident.severity, confidence=0.5, requested_state=incident.status, proposed_action=action,
                           rationale="The person says this is legitimate, but the evidence against it was strong and no guardian is enrolled.",

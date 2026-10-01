@@ -59,10 +59,13 @@ withheld: nothing is stored and no decision is made. Show that as "not kept".
 | `GET /people/{id}/person/state` | `{"guardian": true, "disputes": [{"text", "dispute_by", "steps"}]}`: whether a caregiver decides, and disputes to lodge |
 | `POST /people/{id}/reviews/{review_id}/decision` with `{"approved": true}` | The updated person review; approval respects `not_before` |
 
-`message` is written for the person and is safe to show as it is. When they
-answer "this is mine", post the feedback. For a low-risk incident the agent
-undoes its actions. For a high-risk one the answer is held for the caregiver,
-and the returned decision has `requires_human_approval: true`.
+`message` is written for the person and is safe to show as it is. With a
+guardian enrolled the person has **no decision power**: show warnings without
+answer buttons (the person's web page shows only the connection and the off
+switch), and every decision is the caregiver's on the dashboard. If the
+person's answer is posted anyway, it never undoes anything by itself; it is
+held for the caregiver. With no guardian, the person answers: "this is mine"
+undoes a low-risk warning at once and a high-risk one after a cooling-off.
 
 ### Guardian or no guardian
 
@@ -75,6 +78,7 @@ caregiver.
 |---|---|---|
 | Who approves a dispute | The caregiver | The person themselves |
 | `audience` on the review | `CAREGIVER` | `PERSON` |
+| Person says "this is mine" on a low-risk incident | Held for the caregiver | Undone at once |
 | Person says "this is mine" on a high-risk incident | Held for the caregiver | Held for the person with a 24-hour cooling-off |
 
 During a cooling-off the review has a `not_before` time, and approving before

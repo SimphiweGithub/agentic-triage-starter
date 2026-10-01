@@ -348,13 +348,23 @@ class KinGuardTests(unittest.TestCase):
         return self.runtime.process(RawInputReport(report_id=f"F-{incident_id}", source="person", payload="legitimate",
                                                    metadata={"incident_id": incident_id, "feedback": "legitimate"}))
 
-    def test_person_confirming_a_charge_rolls_the_agent_back(self):
+    def test_person_confirming_a_charge_rolls_the_agent_back_only_when_the_caregiver_agrees(self):
+        self.send("K05")
+        jump = self.send("K08")
+        answer = self.feedback(jump.incident_id)
+        self.assertEqual(answer.action_outcome, ActionOutcome.HELD_FOR_REVIEW)  # the person has no decision power
+        self.assertEqual(self.runtime.reviews[answer.review_id].audience, "CAREGIVER")
+        self.assertNotIn("streambox", WORLD.trusted)
+        self.runtime.decide_review(answer.review_id, approved=True)
+        self.assertIn("streambox", WORLD.trusted)
+
+    def test_with_no_guardian_a_low_risk_answer_is_taken_at_once(self):
+        WORLD.guardian = False
         self.send("K05")
         jump = self.send("K08")
         answer = self.feedback(jump.incident_id)
         self.assertEqual(answer.action_outcome, ActionOutcome.EXECUTED)
         self.assertEqual(answer.status, IncidentState.RESOLVED)
-        self.assertFalse(answer.requires_human_approval)
         self.assertEqual(self.runtime.reviews[jump.review_id].status, "SUPERSEDED")
         self.assertIn("streambox", WORLD.trusted)
 

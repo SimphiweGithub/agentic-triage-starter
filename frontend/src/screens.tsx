@@ -167,6 +167,7 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
   const [warnings, setWarnings] = useState<{ incident_id: string; message: string }[]>([])
   const [reviews, setReviews] = useState<Review[]>([])
   const [answering, setAnswering] = useState<string | null>(null)
+  const [guardian, setGuardian] = useState(true) // with a caregiver enrolled, every decision is theirs, on the dashboard
   const [now, setNow] = useState(() => Date.now())
   const mailbox = me.mailbox
   const personId = me.person?.id
@@ -181,13 +182,15 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
     let live = true
     const refresh = async () => {
       try {
-        const [nextWarnings, nextReviews] = await Promise.all([
+        const [nextWarnings, nextReviews, state] = await Promise.all([
           api<{ incident_id: string; message: string }[]>(`/people/${personId}/outbox`),
           api<Review[]>(`/people/${personId}/person/reviews?status=PENDING`),
+          api<{ guardian: boolean }>(`/people/${personId}/person/state`),
         ])
         if (live) {
           setWarnings(nextWarnings)
           setReviews(nextReviews)
+          setGuardian(state.guardian)
         }
       } catch {
         if (live) toast.error('Could not load your Scam Stop messages. Retrying.', { id: 'person-refresh' })
@@ -263,7 +266,14 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
               : 'Scam Stop no longer reads your email. To connect again, ask for a new link.'}
         </CardDescription>
       </CardHeader>
-      {reviews.length > 0 && (
+      {guardian && connected && (
+        <CardContent>
+          <p className="text-base text-muted-foreground">
+            If an email looks like a scam, the person who looks after you is told on their dashboard and decides what to do. You don’t need to do anything here.
+          </p>
+        </CardContent>
+      )}
+      {!guardian && reviews.length > 0 && (
         <CardContent className="grid gap-4">
           <h2 className="text-lg font-bold">Decisions waiting for you</h2>
           {reviews.map((review) => {
@@ -281,7 +291,7 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
           })}
         </CardContent>
       )}
-      {warnings.length > 0 && (
+      {!guardian && warnings.length > 0 && (
         <CardContent className="grid gap-4">
           <h2 className="text-lg font-bold">Warnings for you</h2>
           {[...new Map(warnings.map((item) => [item.incident_id, item])).values()].map((warning) => (
