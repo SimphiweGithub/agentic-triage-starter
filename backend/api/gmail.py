@@ -14,12 +14,14 @@ from fastapi import HTTPException
 
 GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
 READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"          # move an email to Spam
+SETTINGS_SCOPE = "https://www.googleapis.com/auth/gmail.settings.basic"  # create a filter that blocks a sender
 REVOKE = "https://oauth2.googleapis.com/revoke"
 MAX_PAGES = 10  # 50 emails a page, so one scan looks at up to 500
 
 
-def google_token(user_id: str) -> str:
-    """The user's Google access token from Clerk. Clerk refreshes it when it has expired."""
+def google_grant(user_id: str) -> tuple[str, list[str]]:
+    """The user's Google access token from Clerk, and the permissions it carries. Clerk refreshes it when it has expired."""
     with Clerk(bearer_auth=os.environ["CLERK_SECRET_KEY"]) as clerk:
         tokens = clerk.users.get_o_auth_access_token(user_id=user_id, provider="oauth_google")
     token = next((item for item in tokens if item.token), None)
@@ -27,7 +29,12 @@ def google_token(user_id: str) -> str:
         raise HTTPException(403, "No Google account is connected. Sign in with Google.")
     if READ_SCOPE not in (token.scopes or []):
         raise HTTPException(403, "Google is connected without Gmail read access. Sign in with Google again to grant it.")
-    return token.token
+    return token.token, list(token.scopes or [])
+
+
+def google_token(user_id: str) -> str:
+    """The user's Google access token, with Gmail read access checked."""
+    return google_grant(user_id)[0]
 
 
 def gmail_get(token: str, path: str, params: dict | list | None = None) -> dict:
@@ -60,6 +67,16 @@ def raw_email(token: str, message_id: str) -> str:
     """One email as the raw text of an .eml file, ready for the engine."""
     raw = gmail_get(token, f"/messages/{message_id}", {"format": "raw"})["raw"]
     return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "replace")
+
+
+def gmail_send(token: str, method: str, path: str, body: dict | None = None) -> dict:
+    """One change to the mailbox. Raises HTTPException like gmail_get when Google refuses."""
+    response = httpx.request(method, f"{GMAIL}{path}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+    if response.status_code in (401, 403):
+        raise HTTPException(response.status_code, "Google refused the change to the mailbox.")
+    if response.is_error:
+        raise HTTPException(502, f"Gmail answered {response.status_code}")
+    return response.json() if response.content else {}
 
 
 def revoke(token: str) -> None:

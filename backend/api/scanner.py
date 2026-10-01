@@ -28,7 +28,8 @@ RESOLVED = (IncidentState.RESOLVED, IncidentState.CLOSED)
 def handle_mail(mailbox: dict, raw: str) -> str:
     """Take one email in for the mailbox's person and apply the retention rules. Returns the verdict: safe, flagged or withheld."""
     rt = runtime_for(mailbox["person_id"])
-    result = take_in_email(raw, rt)
+    origin = {"mailbox_id": mailbox["id"], "gmail_id": mailbox["message_id"]} if mailbox.get("message_id") else None
+    result = take_in_email(raw, rt, origin)
     if isinstance(result, Withheld):
         return "withheld"  # a one-time code: nothing was stored
     if result.labels.get("threat") == "BENIGN":
@@ -104,7 +105,7 @@ def scan_gmail(store: Store, mailbox: dict, handle: Callable[[dict, str], str] =
             current = store.mailbox(mailbox["id"])
             if current is None or current["status"] == "disconnected" or current["owner_user_id"] != mailbox["owner_user_id"]:
                 return read
-            store.record_scanned(mailbox["id"], message_id, handle(mailbox, raw))
+            store.record_scanned(mailbox["id"], message_id, handle({**mailbox, "message_id": message_id}, raw))
             read += 1
         store.mark_checked(mailbox["id"])
     except HTTPException as error:

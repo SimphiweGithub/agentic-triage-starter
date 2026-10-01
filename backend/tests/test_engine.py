@@ -964,6 +964,48 @@ class ScannerTests(unittest.TestCase):
         self.assertNotIn("Woolworths", everything)
         self.assertNotIn("482913", everything)
 
+    def blocking(self, scopes):
+        """Gmail replaced by a recorder of the changes asked of it."""
+        from api import gmail_block
+        calls = []
+
+        def send(token, method, path, body=None):
+            calls.append((method, path, body))
+            return {"id": "F1"} if path == "/settings/filters" else {}
+
+        gmail_block.register()
+        stack = [patch.object(gmail_block, "get_store", lambda: self.store),
+                 patch.object(gmail, "google_grant", lambda user_id: ("google-token", scopes)),
+                 patch.object(gmail, "google_token", lambda user_id: "google-token"),
+                 patch.object(gmail, "gmail_send", send)]
+        for item in stack:
+            item.start()
+        self.addCleanup(lambda: [item.stop() for item in stack])
+        return calls
+
+    def test_marking_an_email_scammer_blocks_them_in_gmail_and_undoing_unblocks(self):
+        calls = self.blocking([gmail.READ_SCOPE, gmail.MODIFY_SCOPE, gmail.SETTINGS_SCOPE])
+        self.assertEqual(scanner.handle_mail({**self.mailbox, "message_id": "g-1"}, self.lure), "flagged")
+        self.assertIn(("POST", "/messages/g-1/modify", {"addLabelIds": ["SPAM"], "removeLabelIds": ["INBOX"]}), calls)
+        method, path, body = next(call for call in calls if call[1] == "/settings/filters")
+        self.assertEqual(body, {"criteria": {"from": "techcare-help.example"}, "action": {"addLabelIds": ["TRASH"], "removeLabelIds": ["INBOX"]}})
+        self.assertEqual(self.rt.world.blocks["techcare-help.example"]["filter_id"], "F1")
+        incident_id = next(iter(self.rt.incidents))
+        answer = self.rt.process(RawInputReport(report_id="F-1", source="person", payload="legitimate",
+                                                metadata={"incident_id": incident_id, "feedback": "legitimate"}))
+        self.rt.decide_review(answer.review_id, approved=True)  # the caregiver agrees it was legitimate
+        self.assertIn(("DELETE", "/settings/filters/F1", None), calls)
+        self.assertIn(("POST", "/messages/g-1/modify", {"addLabelIds": ["INBOX"], "removeLabelIds": ["SPAM"]}), calls)
+        self.assertEqual(self.rt.world.blocks, {})
+
+    def test_without_gmail_permission_the_sender_is_still_marked_and_the_trace_says_so(self):
+        calls = self.blocking([gmail.READ_SCOPE])
+        scanner.handle_mail({**self.mailbox, "message_id": "g-2"}, self.lure)
+        self.assertEqual(calls, [])
+        self.assertIn("techcare-help.example", self.rt.world.flagged)
+        trace = " ".join(next(iter(self.rt.decisions.values())).trace)
+        self.assertIn("reconnect Gmail", trace)
+
     def test_safe_mail_joining_an_alert_is_removed_from_memory(self):
         flagged = scanner.handle_mail(self.mailbox, self.lure)
         self.assertEqual(flagged, "flagged")

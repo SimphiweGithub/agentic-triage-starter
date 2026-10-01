@@ -29,10 +29,11 @@ export const SignInButton = (LOCAL_DEMO ? Passthrough : Clerk.SignInButton) as t
 export const SignUpButton = (LOCAL_DEMO ? Passthrough : Clerk.SignUpButton) as typeof Clerk.SignUpButton
 export const useAuth = LOCAL_DEMO ? () => ({ getToken: async () => null as string | null }) : Clerk.useAuth
 
-const GMAIL_READ = 'https://www.googleapis.com/auth/gmail.readonly'
+// Read mail to spot scams; move a scam to Spam (modify); add a filter that blocks the scammer (settings.basic).
+const GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/gmail.settings.basic']
 
 /**
- * Sends the signed-in person back to Google asking only for permission to read their Gmail. Needed when they
+ * Sends the signed-in person back to Google asking for Gmail access: to read it, and to move scams to Spam and block senders. Needed when they
  * signed in but did not tick Gmail access, or signed up without Google: Google remembers the earlier answer
  * and does not ask again by itself. Null in local demo mode, where there is no Google sign-in.
  */
@@ -43,8 +44,8 @@ function useClerkGrantGmail(): (() => Promise<void>) | null {
     const redirectUrl = window.location.href
     const google = user.externalAccounts.find((account) => account.provider === 'google')
     const pending = google
-      ? await google.reauthorize({ additionalScopes: [GMAIL_READ], redirectUrl })
-      : await user.createExternalAccount({ strategy: 'oauth_google', additionalScopes: [GMAIL_READ], redirectUrl })
+      ? await google.reauthorize({ additionalScopes: GMAIL_SCOPES, redirectUrl })
+      : await user.createExternalAccount({ strategy: 'oauth_google', additionalScopes: GMAIL_SCOPES, redirectUrl })
     const next = pending.verification?.externalVerificationRedirectURL
     if (!next) throw new Error('Google did not return a sign-in page. Try again.')
     window.location.href = next.toString()

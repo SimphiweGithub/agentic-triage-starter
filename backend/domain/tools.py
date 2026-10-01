@@ -29,6 +29,7 @@ class World:
     blocked: set[str] = field(default_factory=set)             # operators whose debits the bank is asked to refuse
     trusted: set[str] = field(default_factory=set)             # merchants the person confirmed as their own
     known_senders: set[str] = field(default_factory=set)       # senders a human said were fine when a doubtful warning was held
+    blocks: dict[str, dict] = field(default_factory=dict)      # sender -> how it was blocked outside Scam Stop (a Gmail filter), to undo it
     debits: dict[str, list[float]] = field(default_factory=dict)  # merchant -> amounts seen so far
     guardian: bool = field(default_factory=lambda: os.getenv("KINGUARD_GUARDIAN", "1") != "0")  # is a caregiver enrolled?
 
@@ -78,7 +79,7 @@ def world_state() -> dict:
     """The world as plain JSON values, for saving to disk. Sets become sorted lists."""
     return {"outbox": WORLD.outbox, "flagged": sorted(WORLD.flagged), "disputes": WORLD.disputes,
             "blocked": sorted(WORLD.blocked), "trusted": sorted(WORLD.trusted), "debits": WORLD.debits,
-            "known_senders": sorted(WORLD.known_senders),
+            "known_senders": sorted(WORLD.known_senders), "blocks": WORLD.blocks,
             "guardian": WORLD.guardian}
 
 
@@ -88,6 +89,7 @@ def restore_world(saved: dict) -> None:
     WORLD.outbox, WORLD.disputes, WORLD.debits = saved["outbox"], saved["disputes"], saved["debits"]
     WORLD.flagged, WORLD.blocked, WORLD.trusted = set(saved["flagged"]), set(saved["blocked"]), set(saved["trusted"])
     WORLD.known_senders = set(saved.get("known_senders", []))  # older saved files do not have it
+    WORLD.blocks = saved.get("blocks", {})
     WORLD.guardian = saved["guardian"]
 
 
@@ -202,6 +204,13 @@ def warn_person(action: ActionProposal, incident: IncidentRecord, report: RawInp
     return ToolResult(ok=True, detail="warning delivered to the person")
 
 
+# Outside systems that can really block a sender, such as the person's Gmail. The API layer registers them
+# (api/gmail_block.py); offline runs and most tests have none. A blocker returns a record of what it did, with a
+# "note" for the trace, or None when it does not apply; an unblocker undoes such a record.
+SENDER_BLOCKERS: list[Callable[[str, RawInputReport], dict | None]] = []
+SENDER_UNBLOCKERS: list[Callable[[dict], None]] = []
+
+
 def flag_sender(action: ActionProposal, incident: IncidentRecord, report: RawInputReport) -> ToolResult:
     target = str(action.details.get("target") or "")
     if not target:
@@ -210,7 +219,19 @@ def flag_sender(action: ActionProposal, incident: IncidentRecord, report: RawInp
         return ToolResult(ok=False, detail=f"{target} is a shared mail provider; flagging the whole domain is refused", data={"protected": True})
     WORLD.flagged.add(target)
     WORLD.outbox.append({"incident_id": incident.incident_id, "message": action.details.get("message", "")})
-    return ToolResult(ok=True, detail=f"{target} marked as a scammer; later messages from them are treated as high risk; person warned")
+    notes = []
+    for blocker in SENDER_BLOCKERS:
+        try:
+            record = blocker(target, report)
+        except Exception as error:  # an outside system failing never undoes the marking
+            notes.append(f"could not block outside Scam Stop ({type(error).__name__})")
+            continue
+        if record:
+            notes.append(record.pop("note", ""))
+            if record.get("kind"):
+                WORLD.blocks[target] = record
+    detail = f"{target} marked as a scammer; later messages from them are treated as high risk; person warned"
+    return ToolResult(ok=True, detail="; ".join([detail, *[note for note in notes if note]]))
 
 
 def draft_dispute(action: ActionProposal, incident: IncidentRecord, report: RawInputReport) -> ToolResult:
@@ -240,8 +261,17 @@ def withdraw(action: ActionProposal, incident: IncidentRecord, report: RawInputR
         if record.outcome is not ActionOutcome.EXECUTED:
             continue
         if record.action.type is ActionType.FLAG_SENDER:
-            WORLD.flagged.discard(record.action.details.get("target"))
+            target = record.action.details.get("target")
+            WORLD.flagged.discard(target)
             undone.append("sender flag removed")
+            block = WORLD.blocks.pop(target, None)
+            if block:
+                for unblocker in SENDER_UNBLOCKERS:
+                    try:
+                        unblocker(block)
+                        undone.append("block outside Scam Stop removed")
+                    except Exception as error:
+                        undone.append(f"could not remove the block outside Scam Stop ({type(error).__name__})")
         elif record.action.type is ActionType.DRAFT_DISPUTE:
             WORLD.disputes.pop(record.action.details.get("reg_no"), None)
             undone.append("dispute withdrawn")

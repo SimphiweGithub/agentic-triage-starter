@@ -67,6 +67,18 @@ person's answer is posted anyway, it never undoes anything by itself; it is
 held for the caregiver. With no guardian, the person answers: "this is mine"
 undoes a low-risk warning at once and a high-risk one after a cooling-off.
 
+### Blocking a scammer in Gmail
+
+When the agent marks an email sender as a scammer, it also blocks them in the
+person's Gmail: the scam email is moved to **Spam**, and a filter sends every
+later email from them to the **Bin**. Withdrawing the alert undoes both. This
+needs two extra Google permissions besides `gmail.readonly`:
+`gmail.modify` and `gmail.settings.basic`, added in Google Cloud and in Clerk's
+Google connection. Without them the sender is still marked, and the action's
+detail says to reconnect Gmail. A connected person grants them with the "Allow
+blocking in Gmail" button. Texts and WhatsApp cannot be blocked by any app other
+than the phone's default SMS app, so for those the person is told how to block.
+
 ### Protecting yourself
 
 The first screen after sign-up offers two choices. **Protect someone I look

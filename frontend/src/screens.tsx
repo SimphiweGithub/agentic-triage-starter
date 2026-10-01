@@ -140,7 +140,7 @@ export function ConnectScreen({ token, signedIn, onDone }: { token: string; sign
         {signedIn && needsGrant ? (
           <div className="grid gap-3 rounded-lg bg-warn-soft p-4">
             <strong className="text-warn">Google has not given Scam Stop permission to read your email yet.</strong>
-            <span className="text-base">On the next screen, tick the box for <strong>Read all your Gmail</strong>, then continue. After that, press Connect my Gmail again.</span>
+            <span className="text-base">On the next screen, tick <strong>every Gmail box</strong> (reading mail, and managing spam and filters), then continue. After that, press Connect my Gmail again.</span>
             <Button className="h-12 w-full text-lg" disabled={busy} onClick={grant}>
               {busy ? 'Opening Google…' : 'Give Gmail permission'}
             </Button>
@@ -170,6 +170,7 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
   const [reviews, setReviews] = useState<Review[]>([])
   const [answering, setAnswering] = useState<string | null>(null)
   const [guardian, setGuardian] = useState(true) // with a caregiver enrolled, every decision is theirs, on the dashboard
+  const grantGmail = useGrantGmail()
   const [now, setNow] = useState(() => Date.now())
   const mailbox = me.mailbox
   const personId = me.person?.id
@@ -307,6 +308,14 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
               </div>
             </section>
           ))}
+        </CardContent>
+      )}
+      {connected && grantGmail && (
+        <CardContent className="grid gap-2">
+          <p className="text-sm text-muted-foreground">So Scam Stop can move scam emails to Spam and block the sender, Google needs your permission once. Tick every Gmail box.</p>
+          <Button variant="outline" className="h-11 w-fit px-5 text-base" onClick={() => grantGmail().catch(() => toast.error('Could not open Google. Try again.'))}>
+            Allow blocking in Gmail
+          </Button>
         </CardContent>
       )}
       {connected && (
@@ -516,7 +525,7 @@ function SelfSetup({ connected, onChanged }: { connected: boolean; onChanged: ()
           <strong className="text-lg">Your Gmail</strong>
           {needsGrant ? (
             <>
-              <span>Google has not given Scam Stop permission to read your email yet. On the next screen, tick <strong>Read all your Gmail</strong>, then press Connect my Gmail again.</span>
+              <span>Google has not given Scam Stop permission to read your email yet. On the next screen, tick <strong>every Gmail box</strong> (reading mail, and managing spam and filters), then press Connect my Gmail again.</span>
               <Button className="h-11 w-fit px-5 text-base" disabled={busy} onClick={grant}>{busy ? 'Opening Google…' : 'Give Gmail permission'}</Button>
             </>
           ) : (

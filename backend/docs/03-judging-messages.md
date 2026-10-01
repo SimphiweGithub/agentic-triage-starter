@@ -224,14 +224,16 @@ What this does and does not show:
 
 ## `domain/tools.py`
 
-### The world (lines 24–91)
+### The world (lines 24–93)
 
-- **Lines 24–32 `World`** — one object holding all of one person's outside state:
+- **Lines 24–33 `World`** — one object holding all of one person's outside state:
   - `outbox` — warnings shown to the person.
   - `flagged` — senders and domains marked as scammers. Their later messages
     are treated as high risk (see `assess`).
   - `disputes` — company registration number mapped to the dispute text.
   - `blocked` — operators the bank is asked to refuse.
+  - `blocks` (line 32) — for each sender blocked outside Scam Stop, how (the
+    Gmail filter and the email moved to Spam), so a withdrawal can undo it.
   - `known_senders` (line 31) — senders a human said were fine when a doubtful
     warning about them was held. See `learn_from_review`.
   - `trusted` — merchants the person confirmed as their own. This is the
@@ -239,177 +241,190 @@ What this does and does not show:
   - `debits` — for each merchant, the amounts seen so far.
   - `guardian` — whether a caregiver is enrolled. True unless
     `KINGUARD_GUARDIAN=0`, and changeable through the API.
-- **Line 36 `_default_world`** — the shared world, used when nobody asks for
+- **Line 37 `_default_world`** — the shared world, used when nobody asks for
   their own: the plain console, offline runs and the older tests.
-- **Line 37 `_active_world`** — a `ContextVar` holding the world that is active
+- **Line 38 `_active_world`** — a `ContextVar` holding the world that is active
   right now. A context variable belongs to the thread or task using it, so two
   people being processed at the same moment each see their own.
-- **Lines 40–51 `_ActiveWorld`** — a stand-in that forwards every read and write
+- **Lines 41–52 `_ActiveWorld`** — a stand-in that forwards every read and write
   to the active world (47–48, 50–51). It is why the rules and tools below can
   keep writing `WORLD.flagged` without being told whose world they are in.
-- **Line 54 `WORLD`** — the stand-in. It always means the world of the person
+- **Line 55 `WORLD`** — the stand-in. It always means the world of the person
   being worked on.
-- **Lines 57–59 `default_world`** — returns the shared world.
-- **Lines 62–69 `use_world`** — a context manager: inside the block `WORLD`
+- **Lines 58–60 `default_world`** — returns the shared world.
+- **Lines 63–70 `use_world`** — a context manager: inside the block `WORLD`
   means the given world, and on leaving it goes back to what it was before
   (65, 69), even if an error was raised.
-- **Lines 72–74 `reset_world`** — re-runs the initialiser of the active world,
+- **Lines 73–75 `reset_world`** — re-runs the initialiser of the active world,
   emptying it.
 
-- **Lines 77–82 `world_state`** — the world as plain JSON values for saving;
+- **Lines 78–83 `world_state`** — the world as plain JSON values for saving;
   sets become sorted lists.
-- **Lines 85–91 `restore_world`** — put a saved world back, turning the lists
+- **Lines 86–93 `restore_world`** — put a saved world back, turning the lists
   into sets again.
 
-### Fixture data (lines 95–106)
+### Fixture data (lines 97–108)
 
 Stand-ins for registries we cannot query. All names and domains are fictional.
 
-- **Lines 95–98 `DOMAIN_REGISTERED`** — domain to registration date. Used when
+- **Lines 97–100 `DOMAIN_REGISTERED`** — domain to registration date. Used when
   the live lookup is off or has no answer.
-- **Lines 101–106 `COMPANIES`** — for each company: `name`, `reg_no`,
+- **Lines 103–108 `COMPANIES`** — for each company: `name`, `reg_no`,
   `registered` date, `creditor_code` (the short code its debit references
   start with), and `director` (the person registered as controlling it).
   `TechCare Support` and `PC Care Services` have different names and codes but
   the same director, `D-7781`. That shared director is what makes them one
   operator.
 
-### `DISPUTE_STEPS` (lines 110–115)
+### `DISPUTE_STEPS` (lines 112–117)
 
 Four plain steps for lodging a dispute. They are general on purpose: each
 bank's screens differ, and we have not verified any bank's exact menu.
 
-### Date helpers (lines 118–124)
+### Date helpers (lines 120–126)
 
-- **118–119 `_days_between`** — days from a registration date to the message.
-- **122–124 `_parse_date`** — text to a date-time, assuming UTC if no zone is given.
+- **120–121 `_days_between`** — days from a registration date to the message.
+- **124–126 `_parse_date`** — text to a date-time, assuming UTC if no zone is given.
 
-### `_live_registration` (lines 129–143) — a real lookup
+### `_live_registration` (lines 131–145) — a real lookup
 
 Asks RDAP, the public service that holds domain registration records. Only
 the domain name is sent; nothing about the person or the message.
 
-- **131** — split the domain into its `labels` (`mail`, `shop`, `example`).
-- **132** — try the full name first, then drop leading labels, so
+- **133** — split the domain into its `labels` (`mail`, `shop`, `example`).
+- **134** — try the full name first, then drop leading labels, so
   `mail.shop.example` falls back to `shop.example`.
-- **133–134** — build the request with headers that identify the client.
-- **135–137** — send it with a 6-second timeout and read the `events` list.
-- **138–139** — a network failure, a "not found", or an unreadable reply moves
+- **135–136** — build the request with headers that identify the client.
+- **137–139** — send it with a 6-second timeout and read the `events` list.
+- **140–141** — a network failure, a "not found", or an unreadable reply moves
   on to the next attempt. Nothing is raised.
-- **140–142** — return the date of the `registration` event.
-- **143** — nothing found: `None`.
+- **142–144** — return the date of the `registration` event.
+- **145** — nothing found: `None`.
 
 Known limit: some registries, including `.co.za`, do not answer RDAP. Those
 domains come back as unknown.
 
-### `domain_age` (lines 146–155)
+### `domain_age` (lines 148–157)
 
-- **147** — start with no date.
-- **148–149** — if `KINGUARD_LIVE_LOOKUPS=1`, try the real lookup.
-- **150–151** — **fallback**: if the live lookup is off, failed, or had no
+- **149** — start with no date.
+- **150–151** — if `KINGUARD_LIVE_LOOKUPS=1`, try the real lookup.
+- **152–153** — **fallback**: if the live lookup is off, failed, or had no
   record, use the fixture table. This is a real tool failing and the agent
   carrying on with a second source.
-- **152–153** — still nothing: `ok=False`. The caller must cope with not knowing.
-- **154–155** — return the age in days, and say which source answered.
+- **154–155** — still nothing: `ok=False`. The caller must cope with not knowing.
+- **156–157** — return the age in days, and say which source answered.
 
-### `_similarity` (lines 158–160)
+### `_similarity` (lines 160–162)
 
 How alike two names are, from 0 to 1. Both are lower-cased and stripped of
 spaces and punctuation first, then compared character by character with
 `SequenceMatcher`. `TECHCRE SUP` against `TechCare Support` scores 0.80;
 against `PC Care Services` it scores 0.42.
 
-### `merchant_registry` (lines 163–180)
+### `merchant_registry` (lines 165–182)
 
-- **164** — `words` are the words of the normalised name.
-- **165** — `matches` are companies whose name contains **all** those words
+- **166** — `words` are the words of the normalised name.
+- **167** — `matches` are companies whose name contains **all** those words
   (`words <= ...` means "is a subset of"). `techcare` matches two companies;
   `techcare support` matches one.
-- **166–167** — if a `reference` was given, keep only companies whose
+- **168–169** — if a `reference` was given, keep only companies whose
   `creditor_code` starts it.
-- **168–172** — **the garbled-name fallback.** If nothing matched and there
+- **170–174** — **the garbled-name fallback.** If nothing matched and there
   is a reference, look the other way round: take every company whose
   `creditor_code` starts the reference, and keep it only if the name on the
   statement is at least `NAME_SIMILARITY` like the registered name. Banks
   shorten names (`TECHCRE SUP` for TechCare Support), so an exact word match
   is too strict; the creditor code finds the company and the similarity check
   stops an unrelated name from riding on someone else's code.
-- **173–174** — none left: fail.
-- **175–177** — more than one left: fail as ambiguous, and report how many
+- **175–176** — none left: fail.
+- **177–179** — more than one left: fail as ambiguous, and report how many
   `candidates` there were. That number tells the caller a retry with more
   information is worth trying.
-- **178–180** — exactly one: copy it, add `age_days`, return it.
+- **180–182** — exactly one: copy it, add `age_days`, return it.
 
-### `identify_operator` (lines 183–188)
+### `identify_operator` (lines 185–190)
 
 Returns the director behind a merchant, or an empty string.
 
-- **185** — look up by name.
-- **186–187** — if that failed and there is a reference, retry with it.
-- **188** — return the `director` on success.
+- **187** — look up by name.
+- **188–189** — if that failed and there is a reference, retry with it.
+- **190** — return the `director` on success.
 
-### `mandate_history` (lines 191–195)
+### `mandate_history` (lines 193–197)
 
-- **192** — `previous` debit amounts from this merchant.
-- **193** — `ratio` of this amount to the last one, or `None`.
-- **194–195** — report whether it is the first debit and the ratio.
+- **194** — `previous` debit amounts from this merchant.
+- **195** — `ratio` of this amount to the last one, or `None`.
+- **196–197** — report whether it is the first debit and the ratio.
 
-### Action tools — they change the world (lines 200–252)
+### Action tools — they change the world (lines 202–282)
 
 Every action tool takes the same three arguments (`action`, `incident`,
 `report`) and returns a `ToolResult`.
 
-**`warn_person` (200–202)** — puts the message in the outbox.
+**`warn_person` (202–204)** — puts the message in the outbox.
 
-**`flag_sender` (205–213)** — marks a sender as a scammer.
-- **206** — `target` is the sender to mark.
-- **207–208** — nothing to mark: fail.
-- **209–210** — the target is a shared mail provider: **refuse**, and mark the
+**`SENDER_BLOCKERS`, `SENDER_UNBLOCKERS` (210–211)** — outside systems that can
+really block a sender. The API layer registers the Gmail one
+(`api/gmail_block.py`); this file stays free of Gmail details, and offline runs
+have none. A blocker returns a record of what it did with a `note` for the
+trace, or `None` when it does not apply.
+
+**`flag_sender` (214–234)** — marks a sender as a scammer, and blocks them where
+an outside system allows it.
+- **215** — `target` is the sender to mark.
+- **216–217** — nothing to mark: fail.
+- **218–219** — the target is a shared mail provider: **refuse**, and mark the
   result `protected`. The tool enforces this itself, so it holds even if
   whatever proposed the action got it wrong.
-- **211–213** — otherwise add it to `flagged`, warn the person, succeed.
-  `flagged` is read back by `assess`, so the sender's later messages count as
-  high risk. Nothing outside Scam Stop is blocked.
+- **220–221** — add it to `flagged` and warn the person. `flagged` is read back
+  by `assess`, so the sender's later messages count as high risk.
+- **222–232** — ask each blocker. A blocker that fails is noted and never undoes
+  the marking (226–228). A record with a `kind` is kept in `blocks` so it can
+  be undone; one without (for example "reconnect Gmail to allow blocking") is
+  only a note.
+- **233–234** — succeed, with every note in the detail.
 
-**`draft_dispute` (216–224)**
-- **217–219** — without a registration number the dispute has nobody to be
+**`draft_dispute` (237–245)**
+- **238–240** — without a registration number the dispute has nobody to be
   addressed to: fail.
-- **220–221** — build the dispute text.
-- **222–224** — store the dispute as three things: the `text`, the
+- **241–242** — build the dispute text.
+- **243–245** — store the dispute as three things: the `text`, the
   `dispute_by` date, and the `steps` to lodge it. Return them, and say the
   deadline in the trace. The agent drafts; the person or caregiver lodges.
 
-**`block_operator` (227–233)**
-- **228–230** — without an identified operator there is nothing to block: fail.
-- **231** — add the director to `blocked`.
-- **232–233** — report every company name that director controls.
+**`block_operator` (248–254)**
+- **249–251** — without an identified operator there is nothing to block: fail.
+- **252** — add the director to `blocked`.
+- **253–254** — report every company name that director controls.
 
-**`withdraw` (236–252)** — the rollback.
-- **238** — `undone` collects what was reversed.
-- **239–241** — look only at actions that actually ran (`EXECUTED`).
-- **242–244** — a sender flag is removed from the filter.
-- **245–247** — a dispute is removed.
-- **248–251** — the merchant is added to `trusted` and that is noted.
-- **252** — always succeeds; says "nothing to undo" if that was the case.
+**`withdraw` (257–282)** — the rollback.
+- **259** — `undone` collects what was reversed.
+- **260–262** — look only at actions that actually ran (`EXECUTED`).
+- **263–266** — a sender flag is removed.
+- **267–274** — if the sender was blocked outside Scam Stop, each unblocker undoes
+  it: the Gmail filter is deleted and the email goes back to the inbox.
+- **275–277** — a dispute is removed.
+- **278–281** — the merchant is added to `trusted` and that is noted.
+- **282** — always succeeds; says "nothing to undo" if that was the case.
 
-### The registry of tools (lines 255–263)
+### The registry of tools (lines 285–293)
 
 `ACTION_TOOLS` maps each `ActionType` to the function that carries it out.
 `ADVISE_DECLINE` uses the same function as `WARN_PERSON`: both deliver a
 message to the person, and the message carries the advice.
 The engine looks actions up here. An action with no entry cannot run.
 
-### `correct` (lines 266–271)
+### `correct` (lines 296–301)
 
 Given an action that failed and its result, return a corrected action to try
 next, or `None` to hand over to a human.
 
-- **268** — the sender address from the message's signals.
-- **269–270** — if a `FLAG_SENDER` was refused as `protected`, and there is a
+- **298** — the sender address from the message's signals.
+- **299–300** — if a `FLAG_SENDER` was refused as `protected`, and there is a
   sender address that has not been tried, return the same action with the
   target narrowed to that one address. `model_copy(update=...)` makes a copy
   with one field changed.
-- **271** — any other failure has no known correction.
+- **301** — any other failure has no known correction.
 
 The rules in `logic.py` already choose the address for a shared provider, so
 this path is a second line of defence. It matters when something else
