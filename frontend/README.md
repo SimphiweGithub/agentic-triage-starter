@@ -34,4 +34,4 @@ The Calls and Care circle tabs use the backend's calls and circle routes; see "C
 
 The phone app also expects a native `CallMonitor` Capacitor plugin (`src/phone/call-monitor.ts` describes it): it sees only that a call happened, the number, its length and whether it is a contact, reports unknown calls to the server, and opens the app on the call scams screen from its notification.
 
-To preview the phone screens in a desktop browser during development, open the dev server with `?phone`.
+To preview the phone screens in a desktop browser during development, open the dev server with `?phone`. To preview the signed-out landing page, with its example dashboard, open it with `?landing`.

@@ -38,8 +38,12 @@ function tabFromHash(): TabId {
   return TABS.some((tab) => tab.id === hash) ? (hash as TabId) : 'today'
 }
 
+// `?landing` previews the signed-out landing page during development, even in local demo mode where nobody is signed out.
+const landing = import.meta.env.DEV && new URLSearchParams(window.location.search).has('landing')
+
 function App() {
   const invite = inviteFromAddress()
+  if (landing) return <StartScreen />
   return (
     <>
       <ClerkLoading>

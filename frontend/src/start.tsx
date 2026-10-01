@@ -1,8 +1,9 @@
-import { HeartHandshake, House, ShieldCheck, Stethoscope, UserRound } from 'lucide-react'
+import { ArrowRight, HeartHandshake, House, Lock, MessageSquareWarning, PhoneCall, ShieldCheck, Stethoscope, UserRound, Wallet } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { LOCAL_DEMO, SignInButton, SignUpButton, UserButton } from './auth'
 import { ROLE, type CircleRole } from './circle'
 import { AddPersonForm } from './components/add-person-form'
+import { DashboardPreview } from './components/dashboard-preview'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
 import { Input } from './components/ui/input'
@@ -84,7 +85,31 @@ function RoleChoices({ value, onChange }: { value: CircleRole | null; onChange: 
   )
 }
 
-/** Signed out: pick how you are involved, then sign in or create an account. */
+const STEPS: { title: string; text: string; icon: ReactNode }[] = [
+  {
+    title: 'Messages are checked as they arrive',
+    text: 'Email, SMS and WhatsApp. Obvious scams are binned and the scammer is marked, so the next one is caught too.',
+    icon: <MessageSquareWarning aria-hidden="true" />,
+  },
+  {
+    title: 'Calls are noticed, never listened to',
+    text: 'After a call from an unknown number, the phone shows the common call scams in plain words.',
+    icon: <PhoneCall aria-hidden="true" />,
+  },
+  {
+    title: 'Money waits for the family',
+    text: 'Debit orders and subscriptions that creep in are flagged. Blocking or disputing one always waits for the next of kin.',
+    icon: <Wallet aria-hidden="true" />,
+  },
+]
+
+const PROMISES = [
+  'The family never reads the protected person’s mail. Safe mail is kept only as an id and a verdict.',
+  'One-time codes are thrown away before anything is stored.',
+  'Nothing about money happens without a person saying yes.',
+]
+
+/** Signed out: what Scam Stop does, an example of the family dashboard, then pick how you are involved and sign in. */
 export function StartScreen() {
   const [role, setRole] = useState<CircleRole | null>(savedIntent)
 
@@ -93,30 +118,100 @@ export function StartScreen() {
     saveIntent(next)
   }
 
+  function toStart() {
+    document.getElementById('start')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   return (
-    <Frame wide>
-      <CardHeader className="gap-2">
-        <Brand />
-        <CardTitle className="text-3xl leading-tight font-bold">Keep the people you love safe from scams</CardTitle>
-        <CardDescription className="text-base">Scam messages, risky calls and unwanted debit orders are caught and explained. First, how are you involved?</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-5">
-        <RoleChoices value={role} onChange={pick} />
-        <div className="flex flex-wrap items-center gap-3">
-          <SignUpButton>
-            <Button className="h-11 px-6 text-base" disabled={!role}>
-              Create an account
-            </Button>
-          </SignUpButton>
-          <SignInButton>
-            <Button variant="outline" className="h-11 px-6 text-base" disabled={!role}>
+    <div className="min-h-svh">
+      <header className="sticky top-0 z-20 border-b bg-background/90 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4">
+          <Brand />
+          <nav className="ml-auto flex items-center gap-2">
+            <a href="#how" className="hidden rounded-md px-3 py-2 text-base text-muted-foreground hover:text-foreground sm:inline">
+              How it works
+            </a>
+            <Button variant="outline" className="h-10 px-4" onClick={toStart}>
               Sign in
             </Button>
-          </SignInButton>
-          {!role && <span className="text-sm text-muted-foreground">Choose one to continue.</span>}
+          </nav>
         </div>
-      </CardContent>
-    </Frame>
+      </header>
+
+      <main>
+        <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 py-12 md:py-16 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <div className="grid gap-5">
+            <span className="w-fit rounded-full bg-primary/12 px-3 py-1 text-sm font-bold text-primary">For families looking after someone</span>
+            <h1 className="text-4xl leading-tight font-bold tracking-tight md:text-5xl">Keep the people you love safe from scams</h1>
+            <p className="text-lg text-muted-foreground">
+              Scam messages, risky calls and unwanted debit orders are caught and explained in plain words. The family sees one dashboard, and anything about money waits for them.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Button className="h-12 px-6 text-base" onClick={toStart}>
+                Get started <ArrowRight aria-hidden="true" />
+              </Button>
+              <Button variant="outline" className="h-12 px-6 text-base" nativeButton={false} render={<a href="#how" />}>
+                How it works
+              </Button>
+            </div>
+          </div>
+          <DashboardPreview />
+        </section>
+
+        <section id="how" className="scroll-mt-20 border-y bg-card">
+          <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 md:py-16">
+            <h2 className="text-3xl font-bold tracking-tight">How it works</h2>
+            <ol className="grid gap-6 md:grid-cols-3">
+              {STEPS.map((step) => (
+                <li key={step.title} className="grid content-start gap-3">
+                  <span className="grid size-11 place-items-center rounded-lg bg-primary/12 text-primary [&>svg]:size-5">{step.icon}</span>
+                  <strong className="text-lg leading-snug">{step.title}</strong>
+                  <p className="text-base text-muted-foreground">{step.text}</p>
+                </li>
+              ))}
+            </ol>
+            <ul className="grid gap-3 rounded-xl bg-muted/60 p-5 md:grid-cols-3">
+              {PROMISES.map((promise) => (
+                <li key={promise} className="flex gap-2.5 text-base">
+                  <Lock className="mt-1 size-4 shrink-0 text-primary" aria-hidden="true" />
+                  {promise}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <section id="start" aria-labelledby="start-title" className="mx-auto grid max-w-3xl scroll-mt-20 gap-5 px-4 py-12 md:py-16">
+          <div className="grid gap-2">
+            <h2 id="start-title" className="text-3xl font-bold tracking-tight">
+              First, how are you involved?
+            </h2>
+            <p className="text-base text-muted-foreground">Scam Stop shows each person what fits their role.</p>
+          </div>
+          <RoleChoices value={role} onChange={pick} />
+          <div className="flex flex-wrap items-center gap-3">
+            <SignUpButton>
+              <Button className="h-11 px-6 text-base" disabled={!role}>
+                Create an account
+              </Button>
+            </SignUpButton>
+            <SignInButton>
+              <Button variant="outline" className="h-11 px-6 text-base" disabled={!role}>
+                Sign in
+              </Button>
+            </SignInButton>
+            {!role && <span className="text-sm text-muted-foreground">Choose one to continue.</span>}
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-6 text-sm text-muted-foreground">
+          <span>Scam Stop</span>
+          <span>The dashboard above is an example. Nobody’s real alerts are shown before sign-in.</span>
+        </div>
+      </footer>
+    </div>
   )
 }
 
