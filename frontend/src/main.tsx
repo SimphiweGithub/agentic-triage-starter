@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ClerkProvider } from '@clerk/react'
+import { ClerkProvider } from './auth'
 import { Capacitor } from '@capacitor/core'
 import './index.css'
 import App from './App.tsx'

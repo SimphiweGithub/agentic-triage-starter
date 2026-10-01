@@ -31,9 +31,13 @@ The ways into the engine, the way to score it, and the optional model code.
 - **Line 38** — start the Gmail scanner. It does nothing unless
   `CLERK_SECRET_KEY` is set.
 - **Line 39** — the `static` folder is served under `/static`.
-- **Lines 42–45** — the address `/` returns a plain developer console for
-  watching the engine. The product front end is built separately. The console
-  cannot sign in, so it only works with `KINGUARD_DEV_OPEN=1` (see `api/auth.py`).
+- **Lines 42–45** — `/console` returns the plain developer console for
+  watching the engine. It cannot sign in, so it only works with
+  `KINGUARD_DEV_OPEN=1` (see `api/auth.py`).
+- **Lines 50–56** — the Scam Stop dashboard. If `frontend/dist` has been built,
+  it is mounted at `/`, so the dashboard and the API share one origin and need
+  no CORS. It is mounted last, so every `/api` route above is matched first.
+  Without a build, `/` redirects to the console.
 
 ---
 

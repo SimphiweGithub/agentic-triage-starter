@@ -17,6 +17,10 @@ Open the local URL printed by Vite. Its dev server proxies `/api` to `http://127
 
 Keep `CLERK_SECRET_KEY` in `backend/.env`; the frontend uses only the publishable key. The product app requires a Clerk session and the backend's corresponding secret key.
 
+**Local demo mode.** Without a publishable key in `.env.local`, the dashboard runs without sign-in (`src/auth.tsx`) and shows "Local demo: no sign-in". That only works against a backend with `KINGUARD_DEV_OPEN=1`, which skips sign-in too. Add the key and Clerk is used exactly as before.
+
+After `npm.cmd run build`, the backend serves the dashboard itself at `http://localhost:8000/`; the old developer console moved to `/console`.
+
 ## Checks
 
 ```powershell

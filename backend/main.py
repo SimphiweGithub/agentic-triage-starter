@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.mailbox import start_polling
@@ -39,7 +39,18 @@ start_scanning(store)  # each person's connected Gmail; needs CLERK_SECRET_KEY
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
-@app.get("/", include_in_schema=False)
+@app.get("/console", include_in_schema=False)
 def console():
-    """A plain developer console for watching the engine. The product front end is built separately."""
+    """A plain developer console for watching the engine. The product front end is in frontend/."""
     return FileResponse(ROOT / "static" / "index.html")
+
+
+# The Scam Stop dashboard, once built with `npm run build` in frontend/, is served at / from the same origin.
+# Mounted last, so every /api route above is matched first. Without a build, / sends you to the console.
+DASHBOARD = ROOT.parent / "frontend" / "dist"
+if (DASHBOARD / "index.html").exists():
+    app.mount("/", StaticFiles(directory=DASHBOARD, html=True), name="dashboard")
+else:
+    @app.get("/", include_in_schema=False)
+    def no_dashboard():
+        return RedirectResponse("/console")

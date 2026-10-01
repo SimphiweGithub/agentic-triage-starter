@@ -1,4 +1,4 @@
-import { SignInButton, SignUpButton, UserButton } from '@clerk/react'
+import { SignInButton, SignUpButton, UserButton } from './auth'
 import { MailCheck, ShieldCheck } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'

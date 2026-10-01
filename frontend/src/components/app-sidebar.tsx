@@ -1,4 +1,4 @@
-import { UserButton } from '@clerk/react'
+import { UserButton } from '../auth'
 import { Plus, ShieldCheck } from 'lucide-react'
 import {
   Sidebar,

@@ -1,4 +1,4 @@
-import { ClerkLoading, Show, useAuth } from '@clerk/react'
+import { ClerkLoading, Show, useAuth } from './auth'
 import { ClipboardList, MessageSquarePlus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -38,7 +38,7 @@ function App() {
   return (
     <>
       <ClerkLoading>
-        <p className="my-16 text-center text-muted-foreground">Loading KinGuard…</p>
+        <p className="my-16 text-center text-muted-foreground">Loading Scam Stop…</p>
       </ClerkLoading>
       <Show when="signed-out">{invite ? <ConnectScreen token={invite} signedIn={false} onDone={() => undefined} /> : <SignedOutScreen />}</Show>
       <Show when="signed-in">
