@@ -312,32 +312,44 @@ because the person can also remove access in their Google account.
 ## `api/auth.py`
 
 Who is calling. Clerk proves who the user is; the store says which person they
-are linked to and in what role. Every route except `/health` and the WhatsApp
-webhook goes through here.
+are linked to and in what role. Every route except `/health`, the privacy
+patterns and the WhatsApp webhook goes through here.
 
-- **13–17 `Caller`** — the user's Clerk id, their `role` (`caregiver`,
-  `person`, or `None` before they are linked to anyone) and the person they are
-  linked to.
-- **20–22 `dev_open`** — development only. `KINGUARD_DEV_OPEN=1` turns Clerk off
+- **13–21 `Caller`** — the user's id, their `role` (`caregiver`, `person`, or
+  `None` before they are linked to anyone), the people they are linked to, and
+  `person_id`, the first of those.
+- **24–26 `dev_open`** — development only. `KINGUARD_DEV_OPEN=1` turns Clerk off
   so the plain console and local scripts still work. Off by default.
-- **25–36 `who`** — the Clerk user id behind the session token.
-  - **27–28** — in development mode, read it from an `X-Dev-User` header
+- **29–46 `who`** — the user id behind the request.
+  - **31–36** — **a paired phone.** The phone app cannot sign in, so it sends
+    its pairing code in an `X-Device-Key` header. The store turns the code into
+    the phone's own user id, which is linked to one person as `person`. An
+    unknown or replaced code is 401. This runs before the development switch,
+    so a phone works the same way in both modes.
+  - **37–38** — in development mode, read the user from an `X-Dev-User` header
     (default `dev`), so a developer can act as different people.
-  - **29–31** — without `CLERK_SECRET_KEY` the server cannot check anyone: 503.
-  - **32** — the front end addresses from `CORS_ORIGINS`; a token is only
+  - **39–41** — without `CLERK_SECRET_KEY` the server cannot check anyone: 503.
+  - **42** — the front end addresses from `CORS_ORIGINS`; a token is only
     accepted if Clerk issued it to one of them.
-  - **33–35** — Clerk checks the `Authorization: Bearer` token; no valid
+  - **43–45** — Clerk checks the `Authorization: Bearer` token; no valid
     session is 401.
-  - **36** — the user id (`sub`).
-- **39–41 `caller`** — looks the user up in the store and builds a `Caller`.
-- **44–48 `caregiver`** — passes only a caregiver. Someone not yet linked to
+  - **46** — the user id (`sub`).
+- **49–51 `caller`** — looks the user up in the store and builds a `Caller`.
+- **54–58 `caregiver`** — passes only a caregiver. Someone not yet linked to
   anyone gets 403 "Add the person you look after first", so a stranger who
   signs up sees nothing. In development mode an unlinked caller is let through.
-- **51–55 `member`** — passes a caregiver or the protected person; used for the
+  A paired phone is a `person`, so it never passes.
+- **61–65 `member`** — passes a caregiver or the protected person; used for the
   few routes both may call.
-- **58–62 `caregiver_of`** — the caregiver of *this* person. Another person's
-  id answers 404, as if it did not exist.
-- **65–74 `set_clerk_role`** — also writes the role to the user's Clerk public
+- **68–70 `_may_see`** — linked to this person, or in development mode with
+  nobody linked yet.
+- **73–84 `caregiver_of`, `member_of`** — the caregiver of *this* person, or
+  either of them. Another person's id answers 404, as if it did not exist.
+- **87–106 `active_caregiver_person`, `active_member_person`** — the person a
+  route is about, from the address. With none named, only an unlinked caller in
+  development mode is let through (to the shared runtime); anyone else gets
+  404 "Name the person in the address".
+- **109–118 `set_clerk_role`** — also writes the role to the user's Clerk public
   metadata so the front end can read it. The store stays the authority: a
   Clerk failure is printed and ignored, because the link is already saved.
 
@@ -346,47 +358,61 @@ webhook goes through here.
 ## `api/store.py`
 
 What must survive a restart, in a SQLite file (`KINGUARD_DB`, default
-`backend/kinguard.db`, ignored by git). Incidents and reviews stay in memory.
+`backend/kinguard.db`, ignored by git). Incidents and reviews are saved
+separately, one JSON file per person (`core/store.py`).
 
-- **12–14** — the default file, how long an invite lasts (7 days) and how long a
+- **13–16** — the default file, how long an invite lasts (7 days), the letters a
+  phone pairing code is made from (no O, 0, I or 1, which look alike), and how long a
   temporary Gmail failure may last before it counts as a problem (15 minutes).
-- **16–33 `SCHEMA`** — five tables: `people`; `links` (which user is linked to
+- **18–38 `SCHEMA`** — six tables: `people`; `links` (which user is linked to
   which person, as `caregiver` or `person`); `invites`; `mailboxes` (state, the
   Clerk user that owns the Google connection, last check, last error and when
   failures began); `scanned` (a mailbox id, a message id and a verdict, and
-  **nothing else about the message**).
-- **35–40 `now`, `stamp`** — the current time, and a time as text.
-- **44–49** — open the file (one shared connection, guarded by a lock) and
+  **nothing else about the message**); `phones` (the hash of a pairing code,
+  the person, the phone's own user id, and when it was replaced).
+- **40–45 `now`, `stamp`** — the current time, and a time as text.
+- **49–54** — open the file (one shared connection, guarded by a lock) and
   create the tables if missing.
-- **51–59** — `close`, and `reset`, which empties every table for tests.
-- **61–67** — `_one` and `_all` turn rows into plain dictionaries.
-- **70–76** — `people`, `person`.
-- **78–87 `create_person`** — adds a person and links the creator as caregiver;
+- **56–64** — `close`, and `reset`, which empties every table for tests.
+- **66–72** — `_one` and `_all` turn rows into plain dictionaries.
+- **75–81** — `people`, `person`.
+- **83–92 `create_person`** — adds a person and links the creator as caregiver;
   one caregiver may look after several people.
-- **87–103 `links_of`, `people_of`, `first_person`** — find a user's links,
+- **92–108 `links_of`, `people_of`, `first_person`** — find a user's links,
   their people, and the first person assigned the server's IMAP inbox.
-- **104–112 `create_invite`** — a random, unguessable, single-use token.
-- **113–121** — `invite`, and `pending_invites` (not used, cancelled or expired).
-- **122–128 `cancel_invite`** — only an invite still waiting can be cancelled.
-- **129–148 `accept_invite`** — checks again that the link remains usable,
+- **109–117 `create_invite`** — a random, unguessable, single-use token.
+- **118–126** — `invite`, and `pending_invites` (not used, cancelled or expired).
+- **127–133 `cancel_invite`** — only an invite still waiting can be cancelled.
+- **134–154 `accept_invite`** — checks again that the link remains usable,
   marks it used, removes an earlier
-  protected-person account link for this profile, links the accepting user,
+  protected-person account link for this profile (but not a paired phone, line 143), links the accepting user,
   clears verdicts belonging to the replaced mailbox, and adds a new connected
   Gmail mailbox. The same account can reconnect through a fresh invite.
-- **150–158** — `mailbox` and `mailboxes`, each with `checked`, how many
+- **156–164** — `mailbox` and `mailboxes`, each with `checked`, how many
   messages have a verdict.
-- **159–170 `ensure_forwarded`** — the server's own IMAP mailbox, added once.
-- **171–175 `disconnect`** — Gmail mailbox becomes `disconnected`.
-- **176–181 `mark_checked`** — a good scan: `connected`, time noted, errors
+- **165–176 `ensure_forwarded`** — the server's own IMAP mailbox, added once.
+- **177–181 `disconnect`** — Gmail mailbox becomes `disconnected`.
+- **182–187 `mark_checked`** — a good scan: `connected`, time noted, errors
   cleared. Never wakes a `disconnected` mailbox.
-- **182–195 `mark_failure`** — a revoked or refused token (`permanent`) is a
+- **188–198 `mark_failure`** — a revoked or refused token (`permanent`) is a
   `problem` at once. Anything else only becomes one once failures have lasted
   `OUTAGE_MINUTES`.
-- **196–205** — `seen` and `record_scanned`: has this message been handled, and
+- **202–213 `pair_phone`** — a new 10-character code from `CODE_LETTERS`
+  (about 50 bits). The previous phone is unpaired: its links are deleted and
+  its row marked replaced (207–209). Only the code's hash is stored, with a
+  new user id such as `phone:3f9a1c20`, which is linked to the person as
+  `person` (210–211). The code itself is returned once and never kept.
+- **215–219 `phone_user`** — the user id a code stands for, if it is still the
+  current one.
+- **221–225 `phone_paired`** — when the current phone was paired, for the
+  dashboard. Never the code.
+- **229–236** — `seen` and `record_scanned`: has this message been handled, and
   remember its verdict.
-- **206–219 `invite_problem`** — why an invite cannot be used, in words the
+- **239–241 `_hash`** — SHA-256 of the code after removing spaces and dashes and
+  making it upper case, so a code typed loosely on a phone still matches.
+- **244–257 `invite_problem`** — why an invite cannot be used, in words the
   person would understand, or `None` if it can.
-- **222–228 `get_store`** — one shared store, opened on first use so tests can
+- **260–265 `get_store`** — one shared store, opened on first use so tests can
   point `KINGUARD_DB` at `:memory:` first.
 
 ---
@@ -417,17 +443,20 @@ own Gmail. The contract is in `API.md`.
 - **90–93 `POST /people/{id}/invites`** — a new single-use link, valid 7 days.
 - **96–100 `POST .../invites/{token}/cancel`** — withdraw an invite; 404 if it is
   not waiting any more.
-- **103–110 `GET /invites/{token}`** — no sign-in needed. Says whether the link
+- **103–106 `POST /people/{id}/phone`** — the caregiver gets a pairing code for
+  the person's phone app. It is shown once; a new one unpairs the old phone.
+- **109–112 `GET /people/{id}/phone`** — when a phone was paired, or `null`.
+- **115–122 `GET /invites/{token}`** — no sign-in needed. Says whether the link
   works, and if so whose name is on it, and nothing else.
-- **113–131 `POST /invites/{token}/accept`** — the person signed in with Google
+- **125–143 `POST /invites/{token}/accept`** — the person signed in with Google
   from the link.
-  - **117–119** — an unusable invite is 410 with a plain reason.
-  - **120–123** — the same protected-person account may reconnect; an account
+  - **129–131** — an unusable invite is 410 with a plain reason.
+  - **132–135** — the same protected-person account may reconnect; an account
     linked elsewhere gets 409, including a caregiver's account.
-  - **124–125** — ask Clerk for the Google token. If Gmail read access was not
+  - **136–137** — ask Clerk for the Google token. If Gmail read access was not
     granted this refuses with a clear reason and the invite stays usable.
-  - **126–131** — link them, store the `person` role in Clerk, return `_me`.
-- **134–146 `POST /me/disconnect`** — only the person whose mail it is. Tells
+  - **138–143** — link them, store the `person` role in Clerk, return `_me`.
+- **146–158 `POST /me/disconnect`** — only the person whose mail it is. Tells
   Google to revoke the token (best effort), marks the mailbox `disconnected`
   and stops scanning at once. Only a new invite reconnects it.
 

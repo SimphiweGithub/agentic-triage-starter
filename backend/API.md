@@ -239,11 +239,15 @@ An Android app reading the phone's SMS inbox uses these calls:
 3. `GET /api/people/{id}/outbox`, `/person/reviews?status=PENDING` and
    `/person/state` every few seconds, for warnings, questions and disputes.
 
-**Signing in from the phone is not built yet.** These routes need the
-person's Clerk session, and the app has no sign-in screen, so today the app
-only works against a server started with `KINGUARD_DEV_OPEN=1`. Put the
-person's id from the dashboard under Settings in the app; left empty, it uses
-the shared development runtime.
+**Pairing instead of signing in.** The phone app cannot sign in, so the
+caregiver pairs it: `POST /api/people/{id}/phone` returns
+`{"code": "3EX4SK2HC2"}` once (show it on the Devices tab). The person types
+it into the app, which sends it on every call as the `X-Device-Key` header and
+calls `GET /api/me` to learn its person id. A paired phone is treated as the
+protected person: it reaches only that person's own routes, never the
+caregiver's. A new code unpairs the previous phone, and an unknown or replaced
+code gets `401`. `GET /api/people/{id}/phone` returns `{"paired_at": ...}` or
+`null`, never the code.
 
 Always send `timestamp`, the time the phone received the message in ISO
 format. The message's id is built from it, so sending the same message again
