@@ -49,8 +49,8 @@ The contract for the front end is in `API.md`. This section explains the code.
 **Lines 21–23** — three routers, by who may call them:
 - `router` (line 21) needs a caregiver linked to the person in the path.
 - `person_router` (line 22) accepts that caregiver or the protected person:
-  outbox, feedback, reviews addressed to the person, the person's own state,
-  and the phone's inbox sync.
+  outbox, feedback, reviews addressed to the person, the person's own state
+  and protection counts, and the phone's inbox sync.
 - `open_router` (line 23) needs no session: `GET /health` and
   `GET /privacy/patterns`, neither of which holds anyone's data.
 
@@ -107,29 +107,30 @@ reply is sent.
 
 | Lines | Method and path | Group | What it does |
 |---|---|---|---|
-| 104–107 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
-| 110–113 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in; uses the phone's `timestamp` when given |
-| 116–119 | `POST /intake/share/batch` | person | Many messages at once, oldest first, for the person's phone syncing its SMS inbox |
-| 122–125 | `GET /privacy/patterns` | open | The one-time-code and secret patterns, so the phone can apply the same filter before sending anything |
-| 128–134 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
-| 139–143 | `GET /outbox` | person | Warnings not yet answered by the person |
-| 146–156 | `POST /incidents/{id}/feedback` | person | Only the person may answer about their incident |
-| 161–164 | `GET /incidents` | caregiver | Every incident |
-| 167–177 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
-| 180–185 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
-| 188–192 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
-| 195–199 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
-| 202–205 | `GET /person/reviews` | person | Only reviews addressed to the protected person |
-| 208–211 | `GET /person/state` | person | For the phone: whether a caregiver decides, and the disputes to lodge |
-| 214–225 | `POST /reviews/{id}/decision` | person or caregiver | Only the addressed role may approve or reject |
-| 228–236 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
-| 241–246 | `GET /health` | system | Confirms the server is up and optional parts. No session needed |
-| 249–254 | `GET /state` | system | Everything in one call, plus the simulated world |
-| 257–262 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled, and save it |
-| 265–269 | `POST /reset` | system | Empty this person's runtime |
-| 272–279 | `POST /replay` | system | Reset, then process a list of reports |
-| 282–290 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 293–297 | `POST /replay/step` | system | Process the next messages in the queue |
+| 108–111 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
+| 114–117 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in; uses the phone's `timestamp` when given |
+| 120–123 | `POST /intake/share/batch` | person | Many messages at once, oldest first, for the person's phone syncing its SMS inbox |
+| 126–129 | `GET /privacy/patterns` | open | The one-time-code and secret patterns, so the phone can apply the same filter before sending anything |
+| 132–138 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
+| 143–147 | `GET /outbox` | person | Warnings not yet answered by the person |
+| 150–160 | `POST /incidents/{id}/feedback` | person | Only the person may answer about their incident |
+| 165–168 | `GET /incidents` | caregiver | Every incident |
+| 171–181 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
+| 184–189 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
+| 192–196 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
+| 199–203 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
+| 206–209 | `GET /person/reviews` | person | Only reviews addressed to the protected person |
+| 212–215 | `GET /person/state` | person | For the phone: whether a caregiver decides, and the disputes to lodge |
+| 226–264 | `GET /person/stats` | person | What was stopped for the person, as counts only; `?weeks=` sets the chart's length (1–26, default 8) |
+| 267–282 | `POST /reviews/{id}/decision` | person or caregiver | Only the addressed role may approve or reject |
+| 285–293 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
+| 298–303 | `GET /health` | system | Confirms the server is up and optional parts. No session needed |
+| 306–311 | `GET /state` | system | Everything in one call, plus the simulated world |
+| 314–319 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled, and save it |
+| 322–326 | `POST /reset` | system | Empty this person's runtime |
+| 329–336 | `POST /replay` | system | Reset, then process a list of reports |
+| 339–347 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 350–354 | `POST /replay/step` | system | Process the next messages in the queue |
 
 **`feedback` in detail (150–160)**
 - **153–154** — only the protected person may answer outside development mode.
@@ -154,11 +155,32 @@ the decision that opened it.
 parameters. `?status=PENDING&audience=PERSON` returns what is waiting for the
 person themselves; with nothing, every review is returned.
 
-**`replay_load` in detail (290–298)**
-- **294** — strip an invisible marker from the start of the text, read the
+**`person_stats` in detail (218–264)** — the numbers on the protected
+person's own dashboard. Only counts leave the server: no message text, sender
+or caregiver decision.
+- **218–223 `_when`** — read a report's timestamp; one without a time zone is
+  taken as UTC, and one that cannot be read is skipped (`None`).
+- **229–230** — every kept message, without the person's own answers
+  (`source` `"person"`), which are evidence, not messages.
+- **232–233 `executed`** — the actions of one incident that really ran.
+- **235–237** — a scam counts as stopped when it is not waiting for a review,
+  its `threat` label is not `BENIGN`, and it was not withdrawn. This is the
+  caregiver dashboard's "Handled" group, minus withdrawn ones.
+- **238–242** — money protected: per stopped scam, the largest amount on a
+  dispute or operator block that ran. A debit order seen several times counts once.
+- **243–247** — where each stopped scam first arrived, by `source`.
+- **249–259** — `weeks` (clamped to 1–26) buckets, oldest first. Each kept
+  message adds to `checked` for its week, and to `stopped` when it belongs to a
+  stopped scam, so `stopped` counts scam messages, not scams.
+- **260–264** — the reply. `senders_blocked`, `emails_binned`,
+  `debit_orders_blocked` and `disputes_drafted` come from the person's world;
+  `waiting` counts only reviews addressed to the person.
+
+**`replay_load` in detail (339–347)**
+- **343** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **295–296** — an unsupported file type returns error 400.
-- **297** — parse every row safely and hand the list to the runtime's queue.
+- **344–345** — an unsupported file type returns error 400.
+- **346** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.

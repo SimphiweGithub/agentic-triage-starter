@@ -3,6 +3,7 @@ import { MailCheck, ShieldCheck } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { api, post } from './api'
+import { ProtectionDashboard, useProtectionStats } from './components/protection-stats'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
@@ -140,7 +141,7 @@ export function ConnectScreen({ token, signedIn, onDone }: { token: string; sign
   )
 }
 
-/** What the protected person sees: that it is working, and a way to stop it. Never the alerts. */
+/** What the protected person sees: what has been stopped for them, that it is working, and a way to stop it. Never the caregiver's alerts. */
 export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void }) {
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -150,6 +151,7 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
   const [now, setNow] = useState(() => Date.now())
   const mailbox = me.mailbox
   const personId = me.person?.id
+  const stats = useProtectionStats(personId)
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000)
@@ -224,82 +226,89 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
 
   const connected = mailbox?.status === 'connected'
   return (
-    <Centered>
-      <CardHeader>
-        <div className="flex items-center justify-between">
+    <div className="min-h-svh">
+      <header className="sticky top-0 z-20 border-b bg-background/90 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
           <Brand />
           <UserButton />
         </div>
-        <CardTitle className="text-3xl leading-tight font-bold">
-          {connected ? 'You’re connected' : mailbox?.status === 'problem' ? 'Scam Stop can’t read your Gmail right now' : 'You’re disconnected'}
-        </CardTitle>
-        <CardDescription className="text-base text-foreground">
-          {connected
-            ? mailbox?.last_checked
-              ? `Scam Stop last checked your Gmail on ${formatTime(mailbox.last_checked)}.`
-              : 'Scam Stop will check your Gmail in a moment.'
-            : mailbox?.status === 'problem'
-              ? 'The person who looks after you has been told, and will send you a new link.'
-              : 'Scam Stop no longer reads your email. To connect again, ask for a new link.'}
-        </CardDescription>
-      </CardHeader>
-      {reviews.length > 0 && (
-        <CardContent className="grid gap-4">
-          <h2 className="text-lg font-bold">Decisions waiting for you</h2>
-          {reviews.map((review) => {
-            const waiting = review.not_before && new Date(review.not_before).getTime() > now
-            return (
-              <section key={review.review_id} className="grid gap-3 rounded-lg border p-4">
-                <p className="font-medium">{reviewQuestion(review)}</p>
-                {waiting && <p className="text-sm">You can confirm this after {formatTime(review.not_before!)}. You can say no now.</p>}
-                <div className="flex flex-wrap gap-2">
-                  <Button disabled={Boolean(waiting) || Boolean(answering)} onClick={() => answerReview(review.review_id, true)}>Yes, approve</Button>
-                  <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerReview(review.review_id, false)}>No, leave it</Button>
-                </div>
-              </section>
-            )
-          })}
-        </CardContent>
-      )}
-      {warnings.length > 0 && (
-        <CardContent className="grid gap-4">
-          <h2 className="text-lg font-bold">Warnings for you</h2>
-          {[...new Map(warnings.map((item) => [item.incident_id, item])).values()].map((warning) => (
-            <section key={warning.incident_id} className="grid gap-3 rounded-lg border p-4">
-              <p>{warning.message}</p>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerIncident(warning.incident_id, true)}>This is mine</Button>
-                <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerIncident(warning.incident_id, false)}>I did not agree to this</Button>
-              </div>
-              {warnedAboutBin(warning.message) && <p className="text-sm text-muted-foreground">If this email is really yours, “This is mine” puts it back in your inbox.</p>}
-            </section>
-          ))}
-        </CardContent>
-      )}
-      {connected && (
-        <CardContent>
-          <Button variant="outline" className="h-11 px-5 text-base" onClick={() => setConfirm(true)}>
-            Stop Scam Stop reading my Gmail
-          </Button>
-        </CardContent>
-      )}
-      <Dialog open={confirm} onOpenChange={setConfirm}>
-        <DialogContent className="p-6 sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold">Stop Scam Stop reading your Gmail?</DialogTitle>
-            <DialogDescription>It stops straight away. To start again you would need a new link from the person who invited you.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirm(false)}>
-              Keep it connected
-            </Button>
-            <Button variant="destructive" disabled={busy} onClick={disconnect}>
-              Yes, stop it
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </Centered>
+      </header>
+      <main className="mx-auto grid max-w-5xl gap-6 p-4 md:p-8">
+        <ProtectionDashboard stats={stats} />
+        <Card className="p-2">
+          <CardHeader>
+            <CardTitle className="text-2xl leading-tight font-bold">
+              {connected ? 'You’re connected' : mailbox?.status === 'problem' ? 'Scam Stop can’t read your Gmail right now' : 'You’re disconnected'}
+            </CardTitle>
+            <CardDescription className="text-base text-foreground">
+              {connected
+                ? mailbox?.last_checked
+                  ? `Scam Stop last checked your Gmail on ${formatTime(mailbox.last_checked)}.`
+                  : 'Scam Stop will check your Gmail in a moment.'
+                : mailbox?.status === 'problem'
+                  ? 'The person who looks after you has been told, and will send you a new link.'
+                  : 'Scam Stop no longer reads your email. To connect again, ask for a new link.'}
+            </CardDescription>
+          </CardHeader>
+          {reviews.length > 0 && (
+            <CardContent className="grid gap-4">
+              <h2 className="text-lg font-bold">Decisions waiting for you</h2>
+              {reviews.map((review) => {
+                const waiting = review.not_before && new Date(review.not_before).getTime() > now
+                return (
+                  <section key={review.review_id} className="grid gap-3 rounded-lg border p-4">
+                    <p className="font-medium">{reviewQuestion(review)}</p>
+                    {waiting && <p className="text-sm">You can confirm this after {formatTime(review.not_before!)}. You can say no now.</p>}
+                    <div className="flex flex-wrap gap-2">
+                      <Button disabled={Boolean(waiting) || Boolean(answering)} onClick={() => answerReview(review.review_id, true)}>Yes, approve</Button>
+                      <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerReview(review.review_id, false)}>No, leave it</Button>
+                    </div>
+                  </section>
+                )
+              })}
+            </CardContent>
+          )}
+          {warnings.length > 0 && (
+            <CardContent className="grid gap-4">
+              <h2 className="text-lg font-bold">Warnings for you</h2>
+              {[...new Map(warnings.map((item) => [item.incident_id, item])).values()].map((warning) => (
+                <section key={warning.incident_id} className="grid gap-3 rounded-lg border p-4">
+                  <p>{warning.message}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerIncident(warning.incident_id, true)}>This is mine</Button>
+                    <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerIncident(warning.incident_id, false)}>I did not agree to this</Button>
+                  </div>
+                  {warnedAboutBin(warning.message) && <p className="text-sm text-muted-foreground">If this email is really yours, “This is mine” puts it back in your inbox.</p>}
+                </section>
+              ))}
+            </CardContent>
+          )}
+          {connected && (
+            <CardContent>
+              <Button variant="outline" className="h-11 px-5 text-base" onClick={() => setConfirm(true)}>
+                Stop Scam Stop reading my Gmail
+              </Button>
+            </CardContent>
+          )}
+          <Dialog open={confirm} onOpenChange={setConfirm}>
+            <DialogContent className="p-6 sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-xl font-bold">Stop Scam Stop reading your Gmail?</DialogTitle>
+                <DialogDescription>It stops straight away. To start again you would need a new link from the person who invited you.</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setConfirm(false)}>
+                  Keep it connected
+                </Button>
+                <Button variant="destructive" disabled={busy} onClick={disconnect}>
+                  Yes, stop it
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </Card>
+      </main>
+    </div>
   )
 }
 

@@ -57,7 +57,24 @@ withheld: nothing is stored and no decision is made. Show that as "not kept".
 | `POST /incidents/{incident_id}/feedback` with `{"legitimate": true}` | A decision |
 | `GET /people/{id}/person/reviews?status=PENDING` | Reviews addressed to the person |
 | `GET /people/{id}/person/state` | `{"guardian": true, "disputes": [{"text", "dispute_by", "steps"}]}`: whether a caregiver decides, and disputes to lodge |
+| `GET /people/{id}/person/stats?weeks=8` | What was stopped for the person, as counts only (see below) |
 | `POST /people/{id}/reviews/{review_id}/decision` with `{"approved": true}` | The updated person review; approval respects `not_before` |
+
+`person/stats` holds no message text, sender or caregiver decision:
+
+```json
+{"messages_checked": 148, "scams_stopped": 9, "senders_blocked": 4, "emails_binned": 6,
+ "debit_orders_blocked": 1, "disputes_drafted": 2, "money_protected": 1047.0, "waiting": 0,
+ "channels": {"sms": 4, "email": 3, "whatsapp": 2},
+ "weeks": [{"week_start": "2026-08-06", "checked": 12, "stopped": 0}]}
+```
+
+A scam is stopped when it is not waiting for a review, is not benign and was
+not withdrawn. `money_protected` is in rand: per stopped scam, the largest
+amount on a dispute or debit block that ran. `channels` counts stopped scams
+by where they first arrived. `weeks` has `?weeks=` entries (1 to 26, default 8),
+oldest first; `stopped` there counts scam messages, not scams. `waiting` counts
+only reviews addressed to the person.
 
 `message` is written for the person and is safe to show as it is. When they
 answer "this is mine", post the feedback. For a low-risk incident the agent

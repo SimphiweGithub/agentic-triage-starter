@@ -1,5 +1,5 @@
 """The HTTP API. Every route is under /api. Interactive documentation is served at /docs."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import PurePath
 
@@ -12,7 +12,7 @@ from api.store import get_store
 from core.ingest import kept, read_text_records, safe_parse
 from core.runtime import TriageRuntime
 from domain.briefs import guardian_brief
-from domain.enums import IncidentState
+from domain.enums import ActionOutcome, ActionType, IncidentState
 from domain.extract import OTP_PATTERN, SECRET_PATTERN
 from domain.intake import email_to_row, share_to_row
 from domain.logic import withhold
@@ -213,6 +213,55 @@ def person_reviews(status: str | None = None, rt: TriageRuntime = Depends(member
 def person_state(rt: TriageRuntime = Depends(member_runtime)):
     """What the person's phone shows besides warnings: whether a caregiver decides for them, and disputes to lodge with the bank."""
     return {"guardian": rt.world.guardian, "disputes": list(rt.world.disputes.values())}
+
+
+def _when(text: str) -> datetime | None:
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+@person_router.get("/person/stats", tags=["person"])
+def person_stats(weeks: int = 8, rt: TriageRuntime = Depends(member_runtime)):
+    """What Scam Stop has stopped for the person, as counts only: no message text, sender or caregiver decision."""
+    snapshot = rt.snapshot()
+    reports = {item.report_id: item for item in snapshot["reports"] if item.source != "person"}  # the person's own answers are not messages
+
+    def executed(incident, *kinds):
+        return [record for record in incident.actions if record.outcome == ActionOutcome.EXECUTED and record.action.type in kinds]
+
+    stopped = [incident for incident in snapshot["incidents"]
+               if incident.status != IncidentState.PENDING_REVIEW and incident.labels.get("threat", "BENIGN") != "BENIGN"
+               and not executed(incident, ActionType.WITHDRAW)]
+    money = 0.0
+    for incident in stopped:
+        amounts = [float(record.action.details["amount"]) for record in executed(incident, ActionType.DRAFT_DISPUTE, ActionType.BLOCK_OPERATOR)
+                   if isinstance(record.action.details.get("amount"), (int, float))]
+        money += max(amounts, default=0.0)
+    channels: dict[str, int] = {}
+    for incident in stopped:
+        first = next((reports[report_id] for report_id in incident.report_ids if report_id in reports), None)
+        if first:
+            channels[first.source] = channels.get(first.source, 0) + 1
+    # Week by week, newest last: how many messages arrived and how many of them belonged to a stopped scam.
+    weeks = max(1, min(weeks, 26))
+    start = datetime.now(timezone.utc) - timedelta(weeks=weeks)
+    stopped_ids = {report_id for incident in stopped for report_id in incident.report_ids}
+    series = [{"week_start": (start + timedelta(weeks=index)).date().isoformat(), "checked": 0, "stopped": 0} for index in range(weeks)]
+    for report in reports.values():
+        moment = _when(report.timestamp)
+        if moment is None or moment < start:
+            continue
+        bucket = series[min(int((moment - start) / timedelta(weeks=1)), weeks - 1)]
+        bucket["checked"] += 1
+        bucket["stopped"] += report.report_id in stopped_ids
+    return {"messages_checked": len(reports), "scams_stopped": len(stopped),
+            "senders_blocked": len(rt.world.flagged), "emails_binned": sum(len(entry.get("messages", [])) for entry in rt.world.binned.values()),
+            "debit_orders_blocked": len(rt.world.blocked), "disputes_drafted": len(rt.world.disputes), "money_protected": round(money, 2),
+            "waiting": sum(item.status == "PENDING" and item.audience == "PERSON" for item in snapshot["reviews"]),
+            "channels": channels, "weeks": series}
 
 
 @person_router.post("/reviews/{review_id}/decision", tags=["person"], response_model=ReviewItem)

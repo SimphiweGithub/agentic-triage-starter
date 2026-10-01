@@ -660,6 +660,19 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/people/{first}/state").json()["incidents"], [])
         self.assertEqual(len(self.client.get(f"/api/people/{second}/state").json()["incidents"]), 1)
 
+    def test_the_person_sees_counts_of_what_was_stopped_and_nothing_else(self):
+        person_id = self.add_person()
+        self.client.post(f"/api/people/{person_id}/intake/email", json={"content": self.lure})
+        self.invite_and_accept(person_id, "person_1")
+        self.user = "person_1"
+        stats = self.client.get(f"/api/people/{person_id}/person/stats?weeks=4").json()
+        self.assertEqual((stats["messages_checked"], stats["scams_stopped"], stats["senders_blocked"]), (1, 1, 1))
+        self.assertEqual(stats["channels"], {"email": 1})
+        self.assertEqual(len(stats["weeks"]), 4)
+        self.assertNotIn("techcare", str(stats).lower())  # counts only: no sender or message text
+        self.client.post(f"/api/people/{person_id}/incidents/I0001/feedback", json={"legitimate": False})
+        self.assertEqual(self.client.get(f"/api/people/{person_id}/person/stats").json()["messages_checked"], 1)  # an answer is not a message
+
     def test_the_persons_phone_syncs_its_inbox_and_reads_only_its_own_view(self):
         person_id = self.add_person()
         self.invite_and_accept(person_id, "person_1")
