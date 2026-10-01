@@ -1,12 +1,14 @@
 import { SignInButton, SignUpButton, UserButton, useGrantGmail } from './auth'
-import { MailCheck, ShieldCheck } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { HeartHandshake, MailCheck, ShieldCheck, UserRound } from 'lucide-react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { api, post } from './api'
 import { AddPersonForm } from './components/add-person-form'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
+import { Input } from './components/ui/input'
+import { Label } from './components/ui/label'
 import { formatTime, reviewQuestion } from './format'
 import type { InviteLook, Me, Review } from './types'
 
@@ -246,6 +248,7 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
   }
 
   const connected = mailbox?.status === 'connected'
+  const self = Boolean(me.self_protected)
   return (
     <Centered>
       <CardHeader>
@@ -262,10 +265,11 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
               ? `Scam Stop last checked your Gmail on ${formatTime(mailbox.last_checked)}.`
               : 'Scam Stop will check your Gmail in a moment.'
             : mailbox?.status === 'problem'
-              ? 'The person who looks after you has been told, and will send you a new link.'
-              : 'Scam Stop no longer reads your email. To connect again, ask for a new link.'}
+              ? self ? 'Connect your Gmail again below.' : 'The person who looks after you has been told, and will send you a new link.'
+              : self ? 'Connect your Gmail and pair your phone below. You decide what happens to anything suspicious.' : 'Scam Stop no longer reads your email. To connect again, ask for a new link.'}
         </CardDescription>
       </CardHeader>
+      {self && <SelfSetup connected={connected} onChanged={onChanged} />}
       {guardian && connected && (
         <CardContent>
           <p className="text-base text-muted-foreground">
@@ -381,5 +385,158 @@ export function InviteForSomeoneElse({ onBack }: { onBack: () => void }) {
         </div>
       </CardContent>
     </Centered>
+  )
+}
+
+/** Who is signing up: someone protecting themselves, or someone setting it up for a person they look after. */
+export function RoleScreen({ onAdded }: { onAdded: () => void }) {
+  const [choice, setChoice] = useState<'self' | 'caregiver' | null>(null)
+  if (choice === 'caregiver') return <AddPersonScreen onAdded={onAdded} />
+  if (choice === 'self') return <ProtectMyselfScreen onAdded={onAdded} onBack={() => setChoice(null)} />
+  const options = [
+    { id: 'self', icon: UserRound, title: 'Protect myself', text: 'Scam Stop watches my own texts, WhatsApp and Gmail. I decide what happens.' },
+    { id: 'caregiver', icon: HeartHandshake, title: 'Protect someone I look after', text: 'I am their caregiver or family. They connect their own Gmail from a link I send, and I decide.' },
+  ] as const
+  return (
+    <Centered>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <Brand />
+          <UserButton />
+        </div>
+        <CardTitle className="text-3xl leading-tight font-bold">Who is Scam Stop for?</CardTitle>
+        <CardDescription className="text-base">Being looked after by someone? You do not need to choose: open the link they send you.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {options.map(({ id, icon: Icon, title, text }) => (
+          <button key={id} type="button" onClick={() => setChoice(id)}
+                  className="flex items-start gap-3 rounded-lg border p-4 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">
+            <Icon className="mt-1 size-5 shrink-0 text-primary" aria-hidden="true" />
+            <span>
+              <span className="block text-lg font-bold">{title}</span>
+              <span className="block text-muted-foreground">{text}</span>
+            </span>
+          </button>
+        ))}
+      </CardContent>
+    </Centered>
+  )
+}
+
+function ProtectMyselfScreen({ onAdded, onBack }: { onAdded: () => void; onBack: () => void }) {
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    try {
+      await post('/me/self', { name: name.trim() })
+      onAdded()
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Could not set up. Try again.')
+      setBusy(false)
+    }
+  }
+  return (
+    <Centered>
+      <CardHeader>
+        <Brand />
+        <CardTitle className="text-3xl leading-tight font-bold">Protect yourself</CardTitle>
+        <CardDescription className="text-base">
+          Nobody else is involved. Scam Stop warns you, and asks you before anything that touches your bank. Serious decisions wait a day, so nobody can rush you.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="grid gap-4" onSubmit={submit}>
+          <div className="grid gap-1.5">
+            <Label htmlFor="self-name">Your name</Label>
+            <Input id="self-name" value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} className="h-10 text-base" />
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Button type="submit" className="h-11 px-6 text-base" disabled={busy || !name.trim()}>{busy ? 'Setting up…' : 'Continue'}</Button>
+            <Button type="button" variant="outline" className="h-11 px-5 text-base" onClick={onBack}>Back</Button>
+          </div>
+        </form>
+      </CardContent>
+    </Centered>
+  )
+}
+
+/** For someone protecting themselves: connect their own Gmail, and pair the Scam Stop app on their phone. */
+function SelfSetup({ connected, onChanged }: { connected: boolean; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [needsGrant, setNeedsGrant] = useState(false)
+  const [code, setCode] = useState<string | null>(null)
+  const [pairedAt, setPairedAt] = useState<string | null>(null)
+  const grantGmail = useGrantGmail()
+
+  useEffect(() => {
+    api<{ paired_at: string | null }>('/me/phone').then((answer) => setPairedAt(answer.paired_at)).catch(() => undefined)
+  }, [])
+
+  async function connectGmail() {
+    setBusy(true)
+    try {
+      await post('/me/gmail')
+      toast.success('Your Gmail is connected.')
+      onChanged()
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Could not connect. Try again.'
+      if (/Gmail read access|No Google account/.test(message) && grantGmail) setNeedsGrant(true)
+      else toast.error(message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function grant() {
+    if (!grantGmail) return
+    setBusy(true)
+    try {
+      await grantGmail()
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Could not open Google. Try again.')
+      setBusy(false)
+    }
+  }
+
+  async function pair() {
+    try {
+      setCode((await post<{ code: string }>('/me/phone')).code)
+      setPairedAt(new Date().toISOString())
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Could not create a code. Try again.')
+    }
+  }
+
+  return (
+    <CardContent className="grid gap-4">
+      {!connected && (
+        <section className="grid gap-3 rounded-lg border p-4">
+          <strong className="text-lg">Your Gmail</strong>
+          {needsGrant ? (
+            <>
+              <span>Google has not given Scam Stop permission to read your email yet. On the next screen, tick <strong>Read all your Gmail</strong>, then press Connect my Gmail again.</span>
+              <Button className="h-11 w-fit px-5 text-base" disabled={busy} onClick={grant}>{busy ? 'Opening Google…' : 'Give Gmail permission'}</Button>
+            </>
+          ) : (
+            <Button className="h-11 w-fit px-5 text-base" disabled={busy} onClick={connectGmail}>{busy ? 'Connecting…' : 'Connect my Gmail'}</Button>
+          )}
+        </section>
+      )}
+      <section className="grid gap-3 rounded-lg border p-4">
+        <strong className="text-lg">Your phone</strong>
+        <span className="text-muted-foreground">{pairedAt ? `Your phone was paired on ${formatTime(pairedAt)}.` : 'Install the Scam Stop app on your Android phone, then pair it with a code.'}</span>
+        {code && (
+          <div className="grid gap-1 rounded-lg bg-muted p-4">
+            <span className="text-sm text-muted-foreground">Type this into the app under Pairing code. It is shown only once.</span>
+            <code className="text-2xl font-bold tracking-wider select-all">{code}</code>
+          </div>
+        )}
+        <Button variant={pairedAt ? 'outline' : 'default'} className="h-11 w-fit px-5 text-base" onClick={pair}>
+          {pairedAt ? 'Pair a new phone' : 'Pair my phone'}
+        </Button>
+      </section>
+    </CardContent>
   )
 }

@@ -364,43 +364,49 @@ separately, one JSON file per person (`core/store.py`).
 - **56–64** — `close`, and `reset`, which empties every table for tests.
 - **66–72** — `_one` and `_all` turn rows into plain dictionaries.
 - **75–81** — `people`, `person`.
-- **83–92 `create_person`** — adds a person and links the creator as caregiver;
+- **83–90 `create_person`** — adds a person and links the creator as caregiver;
   one caregiver may look after several people.
-- **92–108 `links_of`, `people_of`, `first_person`** — find a user's links,
+- **92–99 `create_self`** — someone protecting themselves: a person record
+  linked to the user as `person`, with no caregiver.
+- **101–103 `has_caregiver`** — whether anyone is linked to the person as their
+  caregiver. With none, the person sets up their own Gmail and phone.
+- **105–121 `links_of`, `people_of`, `first_person`** — find a user's links,
   their people, and the first person assigned the server's IMAP inbox.
-- **109–117 `create_invite`** — a random, unguessable, single-use token.
-- **118–126** — `invite`, and `pending_invites` (not used, cancelled or expired).
-- **127–133 `cancel_invite`** — only an invite still waiting can be cancelled.
-- **134–154 `accept_invite`** — checks again that the link remains usable,
+- **122–130 `create_invite`** — a random, unguessable, single-use token.
+- **131–139** — `invite`, and `pending_invites` (not used, cancelled or expired).
+- **140–146 `cancel_invite`** — only an invite still waiting can be cancelled.
+- **147–160 `accept_invite`** — checks again that the link remains usable,
   marks it used, removes an earlier
-  protected-person account link for this profile (but not a paired phone, line 143), links the accepting user,
-  clears verdicts belonging to the replaced mailbox, and adds a new connected
-  Gmail mailbox. The same account can reconnect through a fresh invite.
-- **156–164** — `mailbox` and `mailboxes`, each with `checked`, how many
+  protected-person account link for this profile (but not a paired phone, line 156), links the accepting user,
+  then connects their Gmail. The same account can reconnect through a fresh invite.
+- **162–171 `connect_gmail`** — clears verdicts belonging to the replaced
+  mailbox and adds a new connected Gmail mailbox owned by the user. Used by an
+  accepted invite and by someone protecting themselves.
+- **175–183** — `mailbox` and `mailboxes`, each with `checked`, how many
   messages have a verdict.
-- **165–176 `ensure_forwarded`** — the server's own IMAP mailbox, added once.
-- **177–181 `disconnect`** — Gmail mailbox becomes `disconnected`.
-- **182–187 `mark_checked`** — a good scan: `connected`, time noted, errors
+- **184–195 `ensure_forwarded`** — the server's own IMAP mailbox, added once.
+- **196–200 `disconnect`** — Gmail mailbox becomes `disconnected`.
+- **201–206 `mark_checked`** — a good scan: `connected`, time noted, errors
   cleared. Never wakes a `disconnected` mailbox.
-- **188–198 `mark_failure`** — a revoked or refused token (`permanent`) is a
+- **207–217 `mark_failure`** — a revoked or refused token (`permanent`) is a
   `problem` at once. Anything else only becomes one once failures have lasted
   `OUTAGE_MINUTES`.
-- **202–213 `pair_phone`** — a new 10-character code from `CODE_LETTERS`
+- **221–232 `pair_phone`** — a new 10-character code from `CODE_LETTERS`
   (about 50 bits). The previous phone is unpaired: its links are deleted and
-  its row marked replaced (207–209). Only the code's hash is stored, with a
+  its row marked replaced (226–228). Only the code's hash is stored, with a
   new user id such as `phone:3f9a1c20`, which is linked to the person as
-  `person` (210–211). The code itself is returned once and never kept.
-- **215–219 `phone_user`** — the user id a code stands for, if it is still the
+  `person` (229–230). The code itself is returned once and never kept.
+- **234–238 `phone_user`** — the user id a code stands for, if it is still the
   current one.
-- **221–225 `phone_paired`** — when the current phone was paired, for the
+- **240–244 `phone_paired`** — when the current phone was paired, for the
   dashboard. Never the code.
-- **229–236** — `seen` and `record_scanned`: has this message been handled, and
+- **248–255** — `seen` and `record_scanned`: has this message been handled, and
   remember its verdict.
-- **239–241 `_hash`** — SHA-256 of the code after removing spaces and dashes and
+- **258–260 `_hash`** — SHA-256 of the code after removing spaces and dashes and
   making it upper case, so a code typed loosely on a phone still matches.
-- **244–257 `invite_problem`** — why an invite cannot be used, in words the
+- **263–276 `invite_problem`** — why an invite cannot be used, in words the
   person would understand, or `None` if it can.
-- **260–265 `get_store`** — one shared store, opened on first use so tests can
+- **279–284 `get_store`** — one shared store, opened on first use so tests can
   point `KINGUARD_DB` at `:memory:` first.
 
 ---
@@ -417,34 +423,48 @@ own Gmail. The contract is in `API.md`.
   Never a token, never a message.
 - **26–27 `_invite`** — token and dates.
 - **30–31 `_person`** — id, name and relation without private state.
-- **34–43 `_me`** — the signed-in user's role, first person and full `people`
+- **34–44 `_me`** — the signed-in user's role, whether they are protecting
+  themselves (`self_protected`, line 39), first person and full `people`
   list. Caregivers may add more people; a protected person sees their own
   Gmail mailbox state.
-- **46–49 `GET /me`** — who you are.
-- **52–64 `POST /people`** — a caregiver adds another person; an unlinked user
+- **47–50 `GET /me`** — who you are.
+- **53–65 `POST /people`** — a caregiver adds another person; an unlinked user
   becomes a caregiver. The first person gets the optional forwarded inbox.
-- **67–76 `GET /people/summary`** — each caregiver's people with pending
+- **68–77 `GET /people/summary`** — each caregiver's people with pending
   review and mailbox problem counts.
-- **79–82 `GET /people/{id}/mailboxes`** — the person's mailboxes and whether
+- **80–83 `GET /people/{id}/mailboxes`** — the person's mailboxes and whether
   mail is being checked. 404 for anyone else's person.
-- **85–87 `GET /people/{id}/invites`** — invites still waiting.
-- **90–93 `POST /people/{id}/invites`** — a new single-use link, valid 7 days.
-- **96–100 `POST .../invites/{token}/cancel`** — withdraw an invite; 404 if it is
+- **86–88 `GET /people/{id}/invites`** — invites still waiting.
+- **91–94 `POST /people/{id}/invites`** — a new single-use link, valid 7 days.
+- **97–101 `POST .../invites/{token}/cancel`** — withdraw an invite; 404 if it is
   not waiting any more.
-- **103–106 `POST /people/{id}/phone`** — the caregiver gets a pairing code for
+- **104–107 `POST /people/{id}/phone`** — the caregiver gets a pairing code for
   the person's phone app. It is shown once; a new one unpairs the old phone.
-- **109–112 `GET /people/{id}/phone`** — when a phone was paired, or `null`.
-- **115–122 `GET /invites/{token}`** — no sign-in needed. Says whether the link
+- **110–113 `GET /people/{id}/phone`** — when a phone was paired, or `null`.
+- **116–123 `GET /invites/{token}`** — no sign-in needed. Says whether the link
   works, and if so whose name is on it, and nothing else.
-- **125–143 `POST /invites/{token}/accept`** — the person signed in with Google
+- **126–144 `POST /invites/{token}/accept`** — the person signed in with Google
   from the link.
-  - **129–131** — an unusable invite is 410 with a plain reason.
-  - **132–135** — the same protected-person account may reconnect; an account
+  - **130–132** — an unusable invite is 410 with a plain reason.
+  - **133–136** — the same protected-person account may reconnect; an account
     linked elsewhere gets 409, including a caregiver's account.
-  - **136–137** — ask Clerk for the Google token. If Gmail read access was not
+  - **137–138** — ask Clerk for the Google token. If Gmail read access was not
     granted this refuses with a clear reason and the invite stays usable.
-  - **138–143** — link them, store the `person` role in Clerk, return `_me`.
-- **146–158 `POST /me/disconnect`** — only the person whose mail it is. Tells
+  - **139–144** — link them, store the `person` role in Clerk, return `_me`.
+- **147–148 `SelfProtection`** — the name of someone protecting themselves.
+- **151–156 `_self_protected`** — the caller's person id, if they are a person
+  with no caregiver; anyone else gets 403. A person with a caregiver never sets
+  up their own phone or Gmail here: the caregiver does that.
+- **159–170 `POST /me/self`** — someone not yet linked protects themselves: a
+  person record linked to them, and their runtime set to no-guardian mode
+  (lines 166–167), so their reviews are addressed to them and serious ones wait
+  out the cooling-off. 409 if the account is already set up.
+- **173–181 `POST /me/gmail`** — they connect their own Gmail. As with an
+  invite, it refuses with a plain reason if Google did not grant Gmail read
+  access, and the screen then asks Google again.
+- **184–192 `POST` and `GET /me/phone`** — pair their own phone, and when it was
+  paired, the same as the caregiver's routes for a person.
+- **195–207 `POST /me/disconnect`** — only the person whose mail it is. Tells
   Google to revoke the token (best effort), marks the mailbox `disconnected`
   and stops scanning at once. Only a new invite reconnects it.
 

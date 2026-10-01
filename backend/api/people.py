@@ -36,7 +36,8 @@ def _me(me: Caller, store: Store) -> dict:
     mailbox = None
     if me.role == "person":
         mailbox = next((_mailbox(item) for item in store.mailboxes(me.person_id) if item["kind"] == "gmail"), None)
-    return {"user_id": me.user_id, "role": me.role,
+    self_protected = me.role == "person" and bool(me.person_id) and not store.has_caregiver(me.person_id)
+    return {"user_id": me.user_id, "role": me.role, "self_protected": self_protected,
             "person": people[0] if people else None,   # the person a protected person is; a caregiver's first
             "people": people,                         # everyone a caregiver looks after
             "can_add_person": me.role != "person",
@@ -141,6 +142,54 @@ def accept_invite(token: str, user_id: str = Depends(who)):
         raise HTTPException(410, str(error)) from error
     set_clerk_role(user_id, "person")
     return _me(caller(user_id), store)
+
+
+class SelfProtection(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+def _self_protected(me: Caller) -> str:
+    """The person id of someone protecting themselves. A person with a caregiver sets nothing up here."""
+    store = get_store()
+    if me.role != "person" or not me.person_id or store.has_caregiver(me.person_id):
+        raise HTTPException(403, "Only someone protecting themselves can do this; a caregiver sets it up otherwise")
+    return me.person_id
+
+
+@router.post("/me/self", status_code=201)
+def protect_myself(body: SelfProtection, me: Caller = Depends(caller)):
+    """Someone with no caregiver protects themselves. They decide for themselves, so their reviews are addressed to them."""
+    if me.role is not None:
+        raise HTTPException(409, "This account is already set up")
+    store = get_store()
+    person = store.create_self(body.name, me.user_id)
+    runtime = runtime_for(person["id"])
+    runtime.world.guardian = False  # nobody else to ask: serious decisions wait out a cooling-off instead
+    runtime.save()
+    set_clerk_role(me.user_id, "person")
+    return _me(caller(me.user_id), store)
+
+
+@router.post("/me/gmail")
+def connect_my_gmail(me: Caller = Depends(caller)):
+    """Someone protecting themselves connects their own Gmail. Refuses, with a plain reason, if Gmail read access was not granted."""
+    person_id = _self_protected(me)
+    store = get_store()
+    if os.getenv("KINGUARD_DEV_OPEN") != "1":
+        google_token(me.user_id)
+    store.connect_gmail(person_id, me.user_id)
+    return _me(me, store)
+
+
+@router.post("/me/phone", status_code=201)
+def pair_my_phone(me: Caller = Depends(caller)):
+    """Someone protecting themselves pairs their own phone. Shown once; a new code unpairs the previous phone."""
+    return {"code": get_store().pair_phone(_self_protected(me), me.user_id)}
+
+
+@router.get("/me/phone")
+def my_phone(me: Caller = Depends(caller)):
+    return {"paired_at": get_store().phone_paired(_self_protected(me))}
 
 
 @router.post("/me/disconnect")

@@ -89,6 +89,19 @@ class Store:
             self.db.commit()
             return self.person(person_id)
 
+    def create_self(self, name: str, user_id: str) -> dict:
+        """Someone protecting themselves, with no caregiver: they are linked to their own record as the person."""
+        with self.lock:
+            person_id = f"P{secrets.token_hex(4)}"
+            self.db.execute("INSERT INTO people VALUES (?, ?, '', ?)", (person_id, name.strip(), stamp(now())))
+            self.db.execute("INSERT INTO links VALUES (?, ?, 'person')", (person_id, user_id))
+            self.db.commit()
+            return self.person(person_id)
+
+    def has_caregiver(self, person_id: str) -> bool:
+        with self.lock:
+            return self._one("SELECT 1 FROM links WHERE person_id = ? AND role = 'caregiver'", (person_id,)) is not None
+
     def links_of(self, user_id: str) -> list[dict]:
         """Every person this user is linked to, with their role. A caregiver may have several; a protected person has one."""
         with self.lock:
@@ -143,6 +156,12 @@ class Store:
             self.db.execute("DELETE FROM links WHERE person_id = ? AND role = 'person' AND user_id != ? AND user_id NOT LIKE 'phone:%'",
                             (person_id, user_id))  # a paired phone stays paired when the person connects Gmail
             self.db.execute("INSERT OR REPLACE INTO links VALUES (?, ?, 'person')", (person_id, user_id))
+            self.db.commit()
+            return self.connect_gmail(person_id, user_id)
+
+    def connect_gmail(self, person_id: str, user_id: str) -> dict:
+        """Start watching `user_id`'s Gmail for the person: from an accepted invite, or by someone protecting themselves."""
+        with self.lock:
             self.db.execute("DELETE FROM scanned WHERE mailbox_id IN (SELECT id FROM mailboxes WHERE person_id = ? AND kind = 'gmail')", (person_id,))
             self.db.execute("DELETE FROM mailboxes WHERE person_id = ? AND kind = 'gmail'", (person_id,))  # one Gmail per person for now
             mailbox_id = f"M{secrets.token_hex(4)}"

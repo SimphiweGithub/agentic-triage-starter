@@ -166,6 +166,8 @@ export type Me = {
   can_add_person: boolean
   /** The person's own Gmail, for the `person` role. */
   mailbox: Mailbox | null
+  /** A person protecting themselves, with no caregiver: they connect their own Gmail and phone and decide for themselves. */
+  self_protected?: boolean
 }
 
 export type Invite = { token: string; created_at: string; expires_at: string }

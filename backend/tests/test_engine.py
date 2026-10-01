@@ -710,6 +710,36 @@ class AccessTests(unittest.TestCase):
         app.dependency_overrides.clear()
         self.assertEqual(self.client.get("/api/me", headers=phone).status_code, 401)
 
+    def test_someone_protecting_themselves_sets_up_alone_and_decides_alone(self):
+        self.user = "self_1"
+        made = self.client.post("/api/me/self", json={"name": "Lindiwe"})
+        self.assertEqual(made.status_code, 201)
+        me = made.json()
+        person_id = me["person"]["id"]
+        self.assertEqual((me["role"], me["self_protected"]), ("person", True))
+        self.assertEqual(self.client.post("/api/me/self", json={"name": "Again"}).status_code, 409)
+        self.assertFalse(self.client.get(f"/api/people/{person_id}/person/state").json()["guardian"])  # no-guardian mode
+        with patch.object(people, "google_token", return_value="google-token"):
+            self.assertEqual(self.client.post("/api/me/gmail").json()["mailbox"]["status"], "connected")
+        code = self.client.post("/api/me/phone").json()["code"]
+        app.dependency_overrides.clear()
+        phone = {"X-Device-Key": code}
+        self.assertEqual(self.client.get("/api/me", headers=phone).json()["person"]["id"], person_id)
+        self.client.post(f"/api/people/{person_id}/intake/share/batch", headers=phone,
+                         json=[{"text": DEBIT, "sender": "YourBank", "timestamp": "2026-10-02T06:00:00"}])
+        app.dependency_overrides[auth.who] = lambda: self.user
+        mine = self.client.get(f"/api/people/{person_id}/person/reviews?status=PENDING").json()
+        self.assertEqual([item["audience"] for item in mine], ["PERSON"])  # the decision is theirs
+        self.assertEqual(self.client.get(f"/api/people/{person_id}/state").status_code, 403)  # no caregiver view to reach
+
+    def test_a_person_with_a_caregiver_cannot_set_up_their_own_phone_or_gmail(self):
+        person_id = self.add_person()
+        self.invite_and_accept(person_id, "person_1")
+        self.user = "person_1"
+        self.assertFalse(self.client.get("/api/me").json()["self_protected"])
+        self.assertEqual(self.client.post("/api/me/phone").status_code, 403)
+        self.assertEqual(self.client.post("/api/me/gmail").status_code, 403)
+
     def test_the_person_connects_through_a_single_use_invite(self):
         person_id = self.add_person()
         token = self.client.post(f"/api/people/{person_id}/invites").json()["token"]

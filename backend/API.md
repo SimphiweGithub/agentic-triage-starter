@@ -67,6 +67,19 @@ person's answer is posted anyway, it never undoes anything by itself; it is
 held for the caregiver. With no guardian, the person answers: "this is mine"
 undoes a low-risk warning at once and a high-risk one after a cooling-off.
 
+### Protecting yourself
+
+The first screen after sign-up offers two choices. **Protect someone I look
+after** makes the user a caregiver (`POST /people`). **Protect myself** calls
+`POST /me/self` with `{"name": "..."}`: the user becomes the protected person,
+with no caregiver and no-guardian mode on, so every decision is theirs. They
+then connect their own Gmail with `POST /me/gmail` (a `403` saying Gmail read
+access was not granted means ask Google again) and pair their phone with
+`POST /me/phone`, which returns `{"code": ...}` once. `GET /me` includes
+`self_protected: true` for them. A person who has a caregiver gets `403` from
+these routes. Someone being looked after does not choose: they join from the
+caregiver's invite link.
+
 ### Guardian or no guardian
 
 `POST /settings/guardian` with `{"enrolled": false}` switches to solo mode,

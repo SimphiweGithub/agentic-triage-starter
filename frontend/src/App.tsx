@@ -22,7 +22,7 @@ import { Alerts } from './tabs/Alerts'
 import { Devices } from './tabs/Devices'
 import { Money } from './tabs/Money'
 import { Today } from './tabs/Today'
-import { AddPersonScreen, ConnectScreen, InviteForSomeoneElse, PersonHome, SignedOutScreen } from './screens'
+import { ConnectScreen, InviteForSomeoneElse, PersonHome, RoleScreen, SignedOutScreen } from './screens'
 import { usePeopleSummary } from './people'
 import { AddPersonForm } from './components/add-person-form'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog'
@@ -78,7 +78,7 @@ function Authed() {
     return <InviteForSomeoneElse onBack={() => { clearInviteFromAddress(); refresh() }} />
   }
   if (me.role === 'caregiver' && me.people.length > 0) return <Workspace me={me} onMeChanged={refresh} />
-  return <AddPersonScreen onAdded={refresh} />
+  return <RoleScreen onAdded={refresh} />  // nobody linked yet: protect yourself, or someone you look after
 }
 
 const CHOSEN_KEY = 'kinguard.person'
