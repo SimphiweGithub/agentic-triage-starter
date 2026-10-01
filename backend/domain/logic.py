@@ -151,6 +151,11 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     signals = _signals(report)
     if report.metadata.get("feedback") == "legitimate":
         return _withdrawal(incident)
+    if report.metadata.get("feedback") == "not_mine":
+        # The person confirms the warning. Their sentence is not a message to judge: running it through the gate
+        # used to find nothing suspicious and relabel a confirmed scam as safe. Everything about the incident stands.
+        return Assessment(severity=incident.severity, confidence=max(incident.confidence, 0.9), requested_state=incident.status,
+                          rationale="The person says they did not agree to this, which confirms the warning. Nothing is undone.")
 
     is_debit, is_mandate = signals["kind"] == "debit", signals["kind"] == "mandate"
     when = parse_timestamp(report.timestamp) or datetime.now(timezone.utc)

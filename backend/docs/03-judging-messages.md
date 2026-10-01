@@ -592,108 +592,113 @@ learning from the human, in memory, not retraining any rule or model.
 - **146–147** — if Gemini fails, or its message fails the safety check, use
   the standard wording.
 
-### `assess` (lines 150–257)
+### `assess` (lines 150–262)
 
 Called once per message. Returns an `Assessment`.
 
-**Gather (151–162)**
+**Gather (151–167)**
 - **151** — the message's signals.
-- **152–153** — feedback from the person takes the withdrawal path.
-- **155** — `is_debit` and `is_mandate`.
-- **156** — `when`: the message's time, or now if it has none.
-- **157** — `verdict` from the gate. `ask_jev` is passed only when
+- **152–153** — "this is mine" from the person takes the withdrawal path.
+- **154–158** — "I did not agree to this" confirms the warning: the incident
+  keeps its label, severity and state, and nothing is undone. The person's
+  sentence is deliberately not run through the gate. It used to be, the gate
+  found nothing suspicious in "The person says they did not agree to this",
+  and a confirmed scam was relabelled as safe.
+- **160** — `is_debit` and `is_mandate`.
+- **161** — `when`: the message's time, or now if it has none.
+- **162** — `verdict` from the gate. `ask_jev` is passed only when
   `ENABLE_JEV=1`; otherwise the gate runs on rules alone.
-- **158–160** — investigate if it is a debit, a mandate request, or if the
+- **163–165** — investigate if it is a debit, a mandate request, or if the
   gate score reached `GATE_THRESHOLD`.
-- **161–162** — remember this debit's amount for next time, after the
+- **166–167** — remember this debit's amount for next time, after the
   investigation, so the debit is not compared with itself.
 
-**Score (164–187)**
-- **164** — `price_jump` is true if the history finding carried the jump weight.
-- **165** — `trusted`: the person confirmed this merchant, and the price has
+**Score (169–192)**
+- **169** — `price_jump` is true if the history finding carried the jump weight.
+- **170** — `trusted`: the person confirmed this merchant, and the price has
   not jumped. Trust does not cover a jump.
-- **166** — `risk` is 0 for a trusted merchant; otherwise the gate score plus
+- **171** — `risk` is 0 for a trusted merchant; otherwise the gate score plus
   the finding weights, capped at 1.
-- **167–169** — `known`: a human already cleared this sender, and the risk is
+- **172–174** — `known`: a human already cleared this sender, and the risk is
   below `CONTAIN_THRESHOLD`. Then the risk is set to 0. Strong evidence still
   overrides it, because a sender name can be spoofed.
-- **170** — `evidence` is every reason that added risk.
-- **171–172** — `shared_provider` (a shared mail provider such as Gmail) and
+- **175** — `evidence` is every reason that added risk.
+- **176–177** — `shared_provider` (a shared mail provider such as Gmail) and
   `flag_target`: the sender's single address on a shared provider or for SMS
   and WhatsApp, otherwise their domain.
-- **173–176** — **memory of scammers.** If this sender was already marked as a
+- **178–181** — **memory of scammers.** If this sender was already marked as a
   scammer (and the merchant is not trusted), the risk is raised to at least
   `CONTAIN_THRESHOLD` and the reason is recorded. A follow-up such as "did you
   get my message?" looks innocent on its own; from a known scammer it is not.
-- **177** — `established`: the company was identified and is older than
+- **182** — `established`: the company was identified and is older than
   `YOUNG_DAYS`.
-- **178–181** — **the mandate rule.** A request to set up a debit is advised
+- **183–186** — **the mandate rule.** A request to set up a debit is advised
   against unless the merchant is trusted, or is an established company with
   clean wording. The reason is the DebiCheck rule: once a mandate is approved,
   its debits cannot be disputed. So the agent's most useful moment is before
   approval, and the default there is "do not approve what we cannot verify".
   The risk is raised to at least the threshold and the reason is recorded.
-- **182–184** — `threat`: the gate's answer, except that a message with clean
+- **187–189** — `threat`: the gate's answer, except that a message with clean
   wording but risky findings is not called benign.
-- **185–186** — `labels`: threat, merchant and registration number.
-- **187** — `stay`: the state to ask for when nothing should change.
+- **190–191** — `labels`: threat, merchant and registration number.
+- **192** — `stay`: the state to ask for when nothing should change.
 
-**Benign (189–193)** — below the threshold: `LOW`, no action.
+**Benign (194–198)** — below the threshold: `LOW`, no action.
 
-**Suspicious (195–204)**
-- **195** — `confidence` starts at 0.55 and rises 0.1 per piece of evidence,
+**Suspicious (200–209)**
+- **200** — `confidence` starts at 0.55 and rises 0.1 per piece of evidence,
   capped at 0.95. One weak signal gives 0.65, below 0.75, so a human sees it.
-- **196** — `rationale` lists the evidence, then the gate's notes.
-- **197–198** — `conflict`: suspicious wording, but a tool found the sender
+- **201** — `rationale` lists the evidence, then the gate's notes.
+- **202–203** — `conflict`: suspicious wording, but a tool found the sender
   established. That contradiction goes to a human.
-- **199–200** — `disputed`: has a dispute for this incident actually been lodged?
-- **201** — `who`: a name for the messages. The merchant if there is one;
+- **204–205** — `disputed`: has a dispute for this incident actually been lodged?
+- **206** — `who`: a name for the messages. The merchant if there is one;
   otherwise the sender itself for a shared mail provider or an SMS (which has
   no domain), and the sender's domain for other email. Before this, every SMS
   warning said "an unknown sender".
-- **202** — defaults: `MEDIUM`, ask for `CONTAINED`.
-- **204** — `amount_text`: the amount in words for messages, or "an amount".
+- **207** — defaults: `MEDIUM`, ask for `CONTAINED`.
+- **209** — `amount_text`: the amount in words for messages, or "an amount".
 
-**The response ladder (205–250)**
-- **205–211** — a mandate request: `ADVISE_DECLINE`. The message tells the
+**The response ladder (210–255)**
+- **210–216** — a mandate request: `ADVISE_DECLINE`. The message tells the
   person who is asking, for how much, and that it is hard to reverse once
   approved. `HIGH` for R300 or more. Nothing is contained, because the choice
   is the person's; the state is `INVESTIGATING`. This action is on the safe
   list, so it is delivered at once without waiting for anyone.
-- **212–217** — a debit arrives after a dispute was lodged. The dispute did
+- **217–222** — a debit arrives after a dispute was lodged. The dispute did
   not stop the operator, so escalate to `BLOCK_OPERATOR`, severity `HIGH`. The
   agent learns its earlier action failed from the next message, not from the
   tool. `ask` is the plain question shown to whoever approves.
-- **218–224** — a suspicious debit from an identified company:
-  `DRAFT_DISPUTE`, `HIGH` if the amount is R300 or more. Line 223 sets
+- **223–229** — a suspicious debit from an identified company:
+  `DRAFT_DISPUTE`, `HIGH` if the amount is R300 or more. Line 228 sets
   `dispute_by`: the message date plus `DISPUTE_WINDOW_DAYS`.
-- **225–230** — a suspicious debit from an unidentified merchant: only warn
+- **230–235** — a suspicious debit from an unidentified merchant: only warn
   the person, and ask for a human.
-- **231–236** — an unrequested loan, credit or insurance offer
+- **236–241** — an unrequested loan, credit or insurance offer
   (`SALES_OFFER`): only warn, `LOW`, whatever the score. The sender may be a
   real bank or insurer, so it is never blocked, even when a second rule pushes
   the risk past `CONTAIN_THRESHOLD`. The warning explains that replying YES
   agrees to a sales call and that these often end in a debit order. This
   branch comes before the containment branch on purpose.
-- **237–245** — a suspicious message at or above `CONTAIN_THRESHOLD`:
+- **242–250** — a suspicious message at or above `CONTAIN_THRESHOLD`:
   `FLAG_SENDER`, `HIGH` for tech-support or identity threats. The target is
   `flag_target`. The warning says the sender has been **marked as a scammer**,
-  not blocked, and ends with `BLOCK_HOW` for the message's channel (line 244).
+  not blocked, and ends with `BLOCK_HOW` for the message's channel (line 249).
   An earlier version said "We have blocked the sender", which was not true
   for WhatsApp, SMS or Gmail.
-- **246–250** — a mildly suspicious message: `WARN_PERSON`, `LOW`.
+- **251–255** — a mildly suspicious message: `WARN_PERSON`, `LOW`.
 
 Every action on the ladder carries `ask`: a plain question for whoever has
 to approve it, the caregiver or, with no guardian, the person. It was added
 after the first real sync held a warning whose only explanation was
 "Confidence below 0.75". The question never goes to a model.
 
-**Finish (252–257)**
-- **252–253** — if the action carries a message for the person, add the
+**Finish (257–262)**
+- **257–258** — if the action carries a message for the person, add the
   threat's hint from `THREAT_HINTS`, then pass it through `_kind_wording`.
-- **254–255** — a resolved incident that receives new suspicious evidence is
+- **259–260** — a resolved incident that receives new suspicious evidence is
   asked to reopen.
-- **256–257** — return the assessment.
+- **261–262** — return the assessment.
 
 ### What this file does not do
 

@@ -1317,6 +1317,25 @@ class MarkedScammerTests(unittest.TestCase):
         self.assertEqual(stranger.labels["threat"], ThreatDomain.BENIGN.value)
 
 
+class PersonAnswerTests(unittest.TestCase):
+    def test_not_mine_confirms_the_warning_and_never_downgrades_it(self):
+        runtime = TriageRuntime()
+        scam = runtime.process(RawInputReport(report_id="S1", source="sms", timestamp="2026-10-01T09:11:00",
+                                              payload="Congratulations! You have been selected for a R5000 reward. Pay the R200 release fee via voucher to claim.",
+                                              metadata={"sender": "+27845243073"}))
+        before = runtime.incidents[scam.incident_id].model_copy(deep=True)
+        answer = runtime.process(RawInputReport(report_id="F-0001", source="person", timestamp="2026-10-01T09:40:00",
+                                                payload="The person says they did not agree to this.",
+                                                metadata={"incident_id": scam.incident_id, "feedback": "not_mine"}))
+        after = runtime.incidents[scam.incident_id]
+        self.assertEqual(answer.incident_id, scam.incident_id)
+        self.assertEqual(after.labels["threat"], before.labels["threat"])  # it used to become BENIGN
+        self.assertNotEqual(after.labels["threat"], ThreatDomain.BENIGN.value)
+        self.assertEqual((after.severity, after.status), (before.severity, before.status))
+        self.assertIn("confirms the warning", answer.trace[1])
+        self.assertIsNone(answer.proposed_action)
+
+
 class PlainQuestionTests(unittest.TestCase):
     def test_every_action_that_can_be_held_carries_a_plain_question(self):
         runtime = TriageRuntime()
