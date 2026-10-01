@@ -13,6 +13,11 @@ from domain.policy import (CONTAIN_THRESHOLD, COOLING_OFF_SECONDS, DISPUTE_WINDO
 from domain.schemas import ActionProposal, Assessment, IncidentRecord, RawInputReport
 from domain.tools import WORLD, identify_operator
 
+# One sentence added to a warning so the person knows how this kind of scam ends.
+THREAT_HINTS: dict[ThreatDomain, str] = {
+    ThreatDomain.JOB_SCAM: " Jobs that promise easy daily pay end with a request for a fee or your bank details.",
+    ThreatDomain.IMPERSONATION: " Call your relative on the number you already have before sending anything.",
+}
 TIMESTAMP_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%Y/%m/%d %H:%M")
 
 
@@ -182,7 +187,7 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     disputed = any(record.action.type is ActionType.DRAFT_DISPUTE and record.outcome is ActionOutcome.EXECUTED
                    for record in incident.actions)
     shared_provider = signals["sender_domain"] in PROTECTED_DOMAINS
-    who = signals["merchant"] or (signals["sender"] if shared_provider else signals["sender_domain"]) or "an unknown sender"
+    who = signals["merchant"] or (signals["sender"] if shared_provider or not signals["sender_domain"] else signals["sender_domain"]) or "an unknown sender"
     severity, target_state = SeverityLevel.MEDIUM, IncidentState.CONTAINED
 
     amount_text = f"R{signals['amount']:.2f}" if signals["amount"] is not None else "an amount"
@@ -212,6 +217,12 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
         action = ActionProposal(type=ActionType.WARN_PERSON, service=ServiceDomain.PERSON, details={
             "message": f"We noticed a debit of {amount_text} to {who} that we could not verify. Please check it before paying anything more.",
             "ask": f"Scam Stop could not verify a debit of {amount_text} to {who}. Send a warning about it?"})
+    elif threat is ThreatDomain.SALES_OFFER:  # a real company may be selling, so the sender is never blocked
+        severity, target_state = SeverityLevel.LOW, IncidentState.INVESTIGATING
+        action = ActionProposal(type=ActionType.WARN_PERSON, service=ServiceDomain.PERSON, details={
+            "message": f"A message from {who} offers credit or insurance you did not ask for. Replying YES agrees to a sales call, "
+                       "and these often end in a new debit order. You do not have to reply.",
+            "ask": f"A message from {who} offers credit or insurance. Send a warning about it? Say no if it is expected."})
     elif risk >= CONTAIN_THRESHOLD:
         if threat in (ThreatDomain.TECH_SUPPORT_SCAM, ThreatDomain.IDENTITY_FARMING):
             severity = SeverityLevel.HIGH
@@ -226,7 +237,7 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
             "ask": f"Scam Stop is not sure about a message from {who}. Send a warning about it? Say no if it is expected."})
 
     if "message" in action.details:
-        action.details["message"] = _kind_wording(action.details["message"])
+        action.details["message"] = _kind_wording(action.details["message"] + THREAT_HINTS.get(threat, ""))
     if incident.status is IncidentState.RESOLVED:
         target_state = IncidentState.INVESTIGATING
     return Assessment(severity=severity, confidence=confidence, requested_state=target_state, proposed_action=action,

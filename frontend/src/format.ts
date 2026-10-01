@@ -10,6 +10,10 @@ const THREAT: Record<string, string> = {
   GREY_MARKET_SUBSCRIPTION: 'Unwanted subscription',
   IDENTITY_FARMING: 'Phishing for personal details',
   PRIZE_SCAM: 'Prize scam',
+  IMPERSONATION: 'Someone pretending to be family',
+  ADVANCE_FEE: 'Pay-a-fee-first scam',
+  JOB_SCAM: 'Fake job or investment',
+  SALES_OFFER: 'Unrequested loan or insurance offer',
   BENIGN: 'Looks safe',
   UNKNOWN: 'Suspicious message',
 }

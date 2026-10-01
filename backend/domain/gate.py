@@ -13,15 +13,16 @@ from domain.enums import ThreatDomain
 from domain.policy import MODEL_THREAT_CONFIDENCE, MODEL_YES
 
 # key -> (reason shown in the trace, weight added to the score, pattern that triggers it)
-# The last three rules were written from the development split of the UCI SMS Spam
-# Collection and checked on a held-out fifth (see calibrate.py and RATIONALE.md).
+# The prize, claim and premium rules were written from the development split of the UCI
+# SMS Spam Collection and checked on a held-out fifth (see calibrate.py and RATIONALE.md).
 TEXT_RULES: dict[str, tuple[str, float, re.Pattern]] = {
     "urgency": ("urgent or threatening wording", 0.25,
                 re.compile(r"\b(urgent|immediately|final notice|last warning|suspended|within 24 hours|legal action|act now)\b", re.I)),
     "credentials": ("asks for credentials or remote access", 0.35,
                     re.compile(r"\b((confirm|verify|enter|send|share|provide) your (pin|password|card|details|account)|anydesk|teamviewer|remote access)\b", re.I)),
     "payment": ("asks for an unusual payment method", 0.35,
-                re.compile(r"\b(gift card|voucher|bitcoin|crypto|e-?wallet)\b", re.I)),
+                # a voucher alone is ordinary shop marketing; paying or sending one is the scam
+                re.compile(r"\b(gift ?cards?|bitcoin|crypto)\b|\b(pay|buy|send|purchase)\b.{0,30}\b(vouchers?|e-?wallet)\b", re.I)),
     "subscription": ("subscription or renewal wording", 0.15,
                      re.compile(r"\b(subscription|auto[- ]?renew\w*|free trial|premium|membership|protection plan)\b", re.I)),
     "prize": ("says the reader has won or been selected", 0.3,
@@ -30,13 +31,21 @@ TEXT_RULES: dict[str, tuple[str, float, re.Pattern]] = {
               re.compile(r"\b(to claim|claim (your|ur|now|code)|call (now|free|0\d{9,})|(txt|text|send|sms) \w+ to \d{4,6})\b", re.I)),
     "premium": ("premium-rate number or paid-message terms", 0.3,
                 re.compile(r"(\b\d{2,3}p\b|\bR ?\d+(\.\d{2})? ?(/|per ) ?(day|week|wk|msg|sms|min)|\bper (min|msg|sms|week|wk|text)\b|/min|/msg|/wk"
-                           r"|\b(reply|txt|text|sms) stop\b|\bstop to\b|\bunsub(scribe)?\b|\bstd (txt|msg|rate)\b|\b09\d{8,9}\b|\b08[47]\d{7,9}\b)", re.I)),
+                           r"|\bstd (txt|msg|rate)\b|\b09\d{8,9}\b|\b08[47]\d{7,9}\b)", re.I)),
     "impersonation": ("claims to be someone the reader knows, on a new number", 0.2,
                       re.compile(r"\b(new number|changed my number|lost my phone|phone (is|was) (broken|stolen)|this is my new)\b", re.I)),
     "money": ("asks the reader to send money", 0.3,
               re.compile(r"\b(send (me |us )?(some )?(money|cash|airtime|R ?\d+)|(deposit|transfer|pay) (me |us )?(the |a |some )?(money|fee|deposit|R ?\d+))\b", re.I)),
     "advance_fee": ("promises money or a parcel once a fee is paid", 0.3,
                     re.compile(r"\b(inheritance|dear beneficiary|unclaimed (funds?|package|parcel)|(release|processing|clearance|customs|admin) fee|lottery)\b", re.I)),
+    # The last two rules were written from the South African SMS sample (data/sa_messages.tsv).
+    "job": ("offers easy paid work or big returns on a small investment", 0.3,
+            re.compile(r"\b(work(ing)? from home|daily (salary|pay|income)|part[- ]time (staff|jobs?|work|positions?)|(hiring|recruiting) online"
+                       r"|(urgently|now) (hiring|recruit\w*)|earn .{0,40}?(a|per) day|small investment|big returns?|guaranteed (income|returns?|profits?))\b"
+                       r"|[$€£] ?\d+( ?- ?\d+)? ?/ ?day", re.I)),
+    "cold_offer": ("offers credit or insurance nobody asked for; replying YES agrees to a sales call", 0.3,
+                   re.compile(r"^(?=.*\b(loans?|borrow|credit( card)?|life cover|funeral|insurance)\b)(?=.*(\breply yes\b|\bno ?= ?out\b|\baccept offer\b))",
+                              re.I | re.S)),
 }
 TECH_SUPPORT_PATTERN = re.compile(r"\b(tech(nical)? support|virus|infected|anydesk|teamviewer|remote access|protection plan)\b", re.I)
 
@@ -47,11 +56,15 @@ MODEL_QUESTIONS: dict[str, dict] = {
     "payment": {"type": "noul", "instructions": "The message asks the reader to pay with gift cards, vouchers, cryptocurrency or another unusual method."},
     "subscription": {"type": "noul", "instructions": "The message tells the reader about a subscription, renewal, membership or recurring charge."},
     "prize": {"type": "noul", "instructions": "The message tells the reader they have won a prize, a reward or money, or have been specially selected."},
-    "claim": {"type": "noul", "instructions": "The message tells the reader to call or text a number in order to claim or collect something."},
-    "premium": {"type": "noul", "instructions": "The message involves a premium-rate number or a service that charges per message, per minute, per day or per week."},
+    # claim and premium used to say "call or text a number to collect something" and "charges per message, day or week";
+    # Jev then said yes to every network advert for a data bundle ("Dial *123# to buy, valid 7 days").
+    "claim": {"type": "noul", "instructions": "The message tells the reader to call or text a number to claim a prize, reward or money they are said to have won or be owed."},
+    "premium": {"type": "noul", "instructions": "The message involves a premium-rate number, or a charge that repeats automatically per message, per day or per week. Buying a once-off bundle or product is not this."},
     "impersonation": {"type": "noul", "instructions": "The sender claims to be a relative or friend of the reader writing from a new or different number."},
     "money": {"type": "noul", "instructions": "The message asks the reader to send, transfer or deposit money."},
     "advance_fee": {"type": "noul", "instructions": "The message promises money, an inheritance or a parcel once the reader pays a fee."},
+    "job": {"type": "noul", "instructions": "The message offers easy paid work, a daily salary, or high returns on a small investment."},
+    "cold_offer": {"type": "noul", "instructions": "The message offers the reader a loan, credit or insurance they did not ask for, and asks them to reply or click to accept."},
     "threat": {"type": "choice", "instructions": "Which kind of message is this?", "criteria": {
         ThreatDomain.BENIGN.value: "An ordinary message with no sign of a scam",
         ThreatDomain.GREY_MARKET_SUBSCRIPTION.value: "A subscription, premium-rate service or recurring charge the reader may not have knowingly agreed to",
@@ -60,6 +73,8 @@ MODEL_QUESTIONS: dict[str, dict] = {
         ThreatDomain.PRIZE_SCAM.value: "A fake prize, lottery win or reward the reader must act to claim",
         ThreatDomain.IMPERSONATION.value: "Someone pretending to be a relative or friend, usually asking for money",
         ThreatDomain.ADVANCE_FEE.value: "A promise of money, an inheritance or a parcel in return for an upfront fee",
+        ThreatDomain.JOB_SCAM.value: "A fake job, task or investment promising easy daily earnings or big returns",
+        ThreatDomain.SALES_OFFER.value: "An unrequested loan, credit or insurance offer that replying YES would accept",
         ThreatDomain.UNKNOWN.value: "Suspicious, but none of the above",
     }},
 }
@@ -124,6 +139,10 @@ def gate(text: str, signals: dict[str, Any], ask_model: Callable[[str], dict[str
         threat = ThreatDomain.IMPERSONATION
     elif "advance_fee" in hits:
         threat = ThreatDomain.ADVANCE_FEE
+    elif "job" in hits:
+        threat = ThreatDomain.JOB_SCAM
+    elif "cold_offer" in hits:
+        threat = ThreatDomain.SALES_OFFER
     elif "prize" in hits:
         threat = ThreatDomain.PRIZE_SCAM
     elif signals["kind"] == "debit" or hits & {"subscription", "premium"}:

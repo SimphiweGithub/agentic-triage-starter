@@ -24,7 +24,7 @@ here without any tool being called.
 **Lines 11–13** — imports the Jev client, the threat enum, and two thresholds
 from policy.
 
-### `TEXT_RULES` (lines 18–40)
+### `TEXT_RULES` (lines 18–49)
 
 A dictionary. Each entry has a short `key` and three values: the `reason`
 written into the trace, the `weight` added to the score, and the `pattern`
@@ -34,47 +34,79 @@ that triggers it.
 |---|---|---|---|
 | 19–20 | `urgency` | Urgent or threatening wording | 0.25 |
 | 21–22 | `credentials` | A verb, then `your`, then PIN, password, card or details; or a remote-access tool name. It does not fire on a bank saying "never share your PIN" | 0.35 |
-| 23–24 | `payment` | Gift cards, vouchers, crypto | 0.35 |
-| 25–26 | `subscription` | Subscription and renewal words. Weak alone, because honest messages use them too | 0.15 |
-| 27–28 | `prize` | "You have won", winner, prize, awarded, guaranteed, been selected | 0.3 |
-| 29–30 | `claim` | "To claim", "call now", "text WORD to 12345" | 0.3 |
-| 31–33 | `premium` | Pence or rand per message, minute, day or week; "reply STOP"; premium-rate number ranges | 0.3 |
-| 34–35 | `impersonation` | "This is my new number", "lost my phone": someone claiming to be a relative or friend. Weak alone, because honest people change numbers too | 0.2 |
-| 36–37 | `money` | Asks the reader to send, transfer or deposit money | 0.3 |
-| 38–39 | `advance_fee` | Inheritance, unclaimed parcel, release or clearance fee, lottery | 0.3 |
+| 23–25 | `payment` | Gift cards or crypto; or paying, buying or sending a voucher or e-wallet. A voucher on its own does not count (see below) | 0.35 |
+| 26–27 | `subscription` | Subscription and renewal words. Weak alone, because honest messages use them too | 0.15 |
+| 28–29 | `prize` | "You have won", winner, prize, awarded, guaranteed, been selected | 0.3 |
+| 30–31 | `claim` | "To claim", "call now", "text WORD to 12345" | 0.3 |
+| 32–34 | `premium` | Pence or rand per message, minute, day or week; "std txt rate"; premium-rate number ranges | 0.3 |
+| 35–36 | `impersonation` | "This is my new number", "lost my phone": someone claiming to be a relative or friend. Weak alone, because honest people change numbers too | 0.2 |
+| 37–38 | `money` | Asks the reader to send, transfer or deposit money | 0.3 |
+| 39–40 | `advance_fee` | Inheritance, unclaimed parcel, release or clearance fee, lottery | 0.3 |
+| 42–45 | `job` | Work from home, daily salary, part-time staff, hiring online, "earn … a day", "$3-10/day", small investment, big returns | 0.3 |
+| 46–48 | `cold_offer` | A loan, credit, cover or insurance word **and** "Reply YES", "No=out" or "accept offer" anywhere in the message | 0.3 |
 
-The first four rules were written from knowledge of scams. The next three
-were written after measuring: see "How the rules were measured" below. The
-last three cover impersonation and advance-fee scams. The SMS dataset has
-almost none of those, so it could only tell us whether they cause false
-alarms. The first version did (two extra on the held-out set), so
-`impersonation` was weakened to 0.2 and one loose word was removed; after
-that the false alarms were back to two. How many real scams these three
-catch is not measured.
+Where each rule came from:
 
-### `TECH_SUPPORT_PATTERN` (line 41)
+- The first four were written from knowledge of scams.
+- `prize`, `claim` and `premium` were written after measuring on the UCI
+  data: see "How the rules were measured" below.
+- `impersonation`, `money` and `advance_fee` cover scams the UCI data has
+  almost none of, so it could only tell us whether they cause false alarms.
+  The first version did (two extra on the held-out set), so `impersonation`
+  was weakened to 0.2 and one loose word was removed.
+- `job` and `cold_offer` were written from our own South African messages
+  (`data/sa_messages.tsv`), after the rules caught only 4 of its 16 scams.
+
+**How `cold_offer` works (line 47).** `^(?=…)(?=…)` is two lookaheads at the
+start of the text. A lookahead checks that something appears later without
+consuming it, so both must be found, in either order. `re.S` lets `.` cross
+line breaks. One condition alone is not enough: a college saying "Reply YES
+for help with your application" has the reply but no credit word.
+
+**Why `cold_offer` exists.** "Reply YES (free) for a quote. No=out" is how
+South African insurers and lenders sell by SMS. It is not fraud, but for an
+older person replying YES starts a sales call that often ends in a funeral
+policy or a loan with a debit order: the harm Scam Stop exists to prevent.
+It gets its own threat type, `SALES_OFFER`, and a milder response (see
+`logic.py`).
+
+**What was removed.** `premium` used to fire on "reply STOP" and
+"unsubscribe". In the UK data those words came with paid text services, but
+in South Africa direct-marketing SMS must offer an opt-out, so nearly every
+legitimate marketing text has one: 25 of the 30 false alarms on our own
+messages came from it. An opt-out is a sign of lawful marketing, not of a
+scam. The same reasoning removed a voucher on its own from `payment`: shops
+and networks send vouchers all the time; a scammer asks you to *buy* one.
+
+### `TECH_SUPPORT_PATTERN` (line 50)
 
 Words that suggest a tech-support scam. Used only to name the threat type.
 
-### `MODEL_QUESTIONS` (lines 44–65)
+### `MODEL_QUESTIONS` (lines 53–80)
 
 The questions sent to Jev. Jev does not write text; it answers typed
 questions about a piece of content.
 
-- **Lines 45–54** — ten `noul` questions with the **same keys** as
+- **Lines 54–67** — twelve `noul` questions with the **same keys** as
   `TEXT_RULES`. A Noul is a yes/no question; the answer is the probability,
   from 0 to 1, that the statement is true. Each asks one narrow thing, which
   is how the Jev documentation says to use it.
-- **Lines 55–64** — one `choice` question, `threat`. Its `criteria` are the
-  eight `ThreatDomain` values, each with a description. The answer is the
+- **Lines 58–61** — `claim` and `premium` were narrowed after measuring on
+  our own messages. The old wording ("call or text a number to collect
+  something", "charges per message, day or week") made Jev say yes to every
+  network advert for a data bundle, such as "Dial *123# to buy, valid 7
+  days". Now `claim` is about a prize or money said to be owed, and
+  `premium` is about a charge that repeats, not a once-off purchase.
+- **Lines 68–79** — one `choice` question, `threat`. Its `criteria` are the
+  ten `ThreatDomain` values, each with a description. The answer is the
   chosen option and a confidence.
 
-### `ask_jev` (lines 68–70)
+### `ask_jev` (lines 83–85)
 
 Calls the Jev client with the message as the state and `MODEL_QUESTIONS` as
 the questions. Only the masked message text is sent.
 
-### `GateVerdict` (lines 73–78)
+### `GateVerdict` (lines 88–93)
 
 - `score` — 0 to 1.
 - `reasons` — the findings that added to the score.
@@ -82,33 +114,33 @@ the questions. Only the masked message text is sent.
 - `notes` — remarks that did not change the score, such as "the model was
   unavailable". They are kept separate so they cannot inflate confidence.
 
-### `gate` (lines 81–133)
+### `gate` (lines 96–152)
 
 Arguments: the message `text`, its `signals`, and an optional `ask_model`
 function.
 
-**Rules (83–97)**
-- **83** — start: `score` 0, no `reasons`, `hits` (the set of keys that
+**Rules (98–112)**
+- **98** — start: `score` 0, no `reasons`, `hits` (the set of keys that
   matched) empty, no `notes`.
-- **84–88** — for every rule whose pattern is found, add its weight, record
+- **99–103** — for every rule whose pattern is found, add its weight, record
   its reason, and remember its key in `hits`.
-- **89–91** — replies go to a different domain than the sender: +0.2.
-- **92–94** — the mail provider's authentication failed: +0.25.
-- **95–97** — a link shows one address and leads to another: +0.3.
+- **104–106** — replies go to a different domain than the sender: +0.2.
+- **107–109** — the mail provider's authentication failed: +0.25.
+- **110–112** — a link shows one address and leads to another: +0.3.
 
-**Decision model (99–112)**
-- **99** — `model_threat` starts as `None`.
-- **100** — only runs if a model function was supplied.
-- **102** — ask the model once; `answers` holds every question's answer.
-- **103–108** — for each judgement: read the probability. If the key is **not**
+**Decision model (114–128)**
+- **114** — `model_threat` starts as `None`.
+- **115** — only runs if a model function was supplied.
+- **117** — ask the model once; `answers` holds every question's answer.
+- **118–123** — for each judgement: read the probability. If the key is **not**
   already in `hits` and the probability is at least `MODEL_YES`, add the same
   weight, record the reason marked as coming from the model, and add the key.
-- **109–110** — use the model's threat type only if its confidence is at least
+- **124–125** — use the model's threat type only if its confidence is at least
   `MODEL_THREAT_CONFIDENCE`. `ThreatDomain(...)` fails if the model returns a
   value outside the enum, which lands in the `except`.
-- **111–112** — any failure (no key, network, bad reply) becomes a note. The
-  rule score already computed is untouched.
-- **113** — cap the score at 1.0.
+- **126–127** — any failure (no key, network, bad reply, a missing answer)
+  becomes a note. The rule score already computed is untouched.
+- **128** — cap the score at 1.0.
 
 Three properties to remember:
 
@@ -118,18 +150,22 @@ Three properties to remember:
    the threshold are in our code.
 3. **The gate works without it.**
 
-**Naming the threat (115–132)**
-- **115–116** — score 0: `BENIGN`.
-- **117–118** — a confident model answer other than benign is used.
-- **119–120** — tech-support words: `TECH_SUPPORT_SCAM`.
-- **121–122** — a credentials hit: `IDENTITY_FARMING`.
-- **123–124** — an impersonation hit: `IMPERSONATION`.
-- **125–126** — an advance-fee hit: `ADVANCE_FEE`.
-- **127–128** — a prize hit: `PRIZE_SCAM`.
-- **129–130** — a debit, or a subscription or premium hit:
+**Naming the threat (130–151)**
+- **130–131** — score 0: `BENIGN`.
+- **132–133** — a confident model answer other than benign is used.
+- **134–135** — tech-support words: `TECH_SUPPORT_SCAM`.
+- **136–137** — a credentials hit: `IDENTITY_FARMING`.
+- **138–139** — an impersonation hit: `IMPERSONATION`.
+- **140–141** — an advance-fee hit: `ADVANCE_FEE`.
+- **142–143** — a job hit: `JOB_SCAM`.
+- **144–145** — a cold-offer hit: `SALES_OFFER`. It comes before `prize`
+  because lenders write "you've been selected to apply", which also trips the
+  prize rule; the message is still a credit offer, not a fake prize.
+- **146–147** — a prize hit: `PRIZE_SCAM`.
+- **148–149** — a debit, or a subscription or premium hit:
   `GREY_MARKET_SUBSCRIPTION`. `hits & {...}` is the overlap of two sets.
-- **131–132** — otherwise `UNKNOWN`.
-- **133** — return the verdict.
+- **150–151** — otherwise `UNKNOWN`.
+- **152** — return the verdict.
 
 Why a prompt injection fails here: the rules only search for patterns, and
 the model is asked fixed questions about the text, not given the text as
@@ -138,29 +174,51 @@ score.
 
 ### How the rules were measured
 
-Dataset: the UCI SMS Spam Collection, 5,574 SMS labelled spam or not by its
-authors. Every fifth message was held out; rules were written looking only at
-the other four fifths.
+**UCI SMS Spam Collection.** 5,574 UK SMS labelled spam or not by its
+authors. Every fifth message was held out; the prize, claim and premium
+rules were written looking only at the other four fifths. All at threshold
+0.30.
 
-| Rules | Measured on | Caught | False alarms | Missed |
-|---|---|---|---|---|
-| First four only | Whole dataset, threshold 0.30 | 17 of 747 (2%) | 4 of 4,827 | 730 |
-| All seven | Held-out fifth, threshold 0.30 | 83 of 156 (53%) | 2 of 959 | 73 |
-| All seven, plus Jev | Held-out fifth, threshold 0.30 | 135 of 156 (87%) | 6 of 959 | 21 |
+| Rules | Measured on | Caught | False alarms |
+|---|---|---|---|
+| First four only | Whole dataset | 17 of 747 (2%) | 4 of 4,827 |
+| Seven | Held-out fifth | 83 of 156 (53%) | 2 of 959 |
+| Seven, plus Jev | Held-out fifth | 135 of 156 (87%) | 6 of 959 |
+| Twelve, after the South African changes | Held-out fifth | 75 of 156 (48%) | 3 of 959 |
+| Twelve, plus Jev with the narrowed questions | Held-out fifth | 104 of 156 (67%) | 7 of 959 |
+
+**Our own South African SMS.** 148 received texts from one phone, masked,
+labelled by a team member: 16 scam, 132 not. Marketing counts as not a scam.
+
+| Rules | Caught | False alarms |
+|---|---|---|
+| Ten, before the changes | 4 of 16 | 30 of 132 |
+| Ten, plus Jev | 5 of 16 | 49 of 132 |
+| Twelve | 16 of 16 | 3 of 132 |
+| Twelve, plus Jev with the narrowed questions | 16 of 16 | 9 of 132 |
 
 What this does and does not show:
 
-- The original rules missed almost everything in this data. We only know
+- The original rules missed almost everything in the UK data. We only know
   that because we measured.
-- The rules now catch about half, with very few false alarms.
-- Adding Jev (real calls, about 0.4 seconds each) lifts that to 87% and adds
-  four false alarms. The model earns its place: it recognises wording the
-  patterns cannot list in advance.
-- `MODEL_YES` stayed at 0.7 throughout. It was not tuned on the held-out
-  messages, because a threshold tuned on the test set proves nothing.
-- The data is general SMS spam from the UK, collected years ago. It is a
-  stand-in. It says nothing about debit-order messages or South African
-  wording; the rand and "reply STOP" patterns are untested.
+- **The South African score is not independent.** `job` and `cold_offer`, the
+  opt-out and voucher removals and the question wording were all chosen by
+  looking at these 148 messages. 16 of 16 shows the rules now describe them;
+  it does not show how they do on messages we have not seen. That needs new
+  messages, such as the bot's.
+- Of the 3 remaining false alarms, one is a labelling mistake (a "work with
+  your phone, earn a day" recruitment text marked as not a scam), one is a
+  real R1-a-day subscription advert, and one is a price notice quoting cents
+  "per min".
+- **The trade-off we chose.** Dropping "reply STOP" and lone vouchers cost 8 UK catches,
+  because UK spam in this dataset includes paid marketing that ends that way.
+  Narrowing Jev's `claim` and `premium` questions cost 27 more UK catches but
+  removed 16 false alarms on our own messages. Each change alone removed only
+  6 or 7. We kept both because Scam Stop is for South African phones: a
+  warning on one in five ordinary texts would teach people to ignore it.
+- The question wording was compared on the UCI held-out fifth as well, so
+  for the Jev rows that fifth is no longer untouched.
+- `MODEL_YES` stayed at 0.7 throughout.
 
 ---
 
@@ -411,182 +469,198 @@ warning instead.
 
 The functions here are the hooks the engine calls.
 
-### `withhold` (lines 19–23)
+### `THREAT_HINTS` (lines 17–20)
+
+One sentence added to the end of a warning for some threat types, telling the
+person how that kind of scam usually ends: a job scam ends with a fee or a
+request for bank details; a "new number" relative is checked by calling the
+old number. A threat type with no entry adds nothing.
+
+### `withhold` (lines 24–28)
 
 Returns a reason to discard a row, or `None`. One-time codes are discarded.
 
-### `parse_record` (lines 26–38)
+### `parse_record` (lines 31–43)
 
-- **28** — `known` is the set of field names on `RawInputReport`.
-- **29** — `record` keeps the row's known fields.
-- **30** — `extras` are the row's other columns.
-- **31–32** — extras are folded into `metadata`, so nothing is lost.
-- **33** — build and validate the report.
-- **34** — mask account numbers in the payload.
-- **35** — extract the `signals`.
-- **36** — add `operator`: the director behind the merchant, from the registry.
-- **37–38** — attach the signals and return.
+- **33** — `known` is the set of field names on `RawInputReport`.
+- **34** — `record` keeps the row's known fields.
+- **35** — `extras` are the row's other columns.
+- **36–37** — extras are folded into `metadata`, so nothing is lost.
+- **38** — build and validate the report.
+- **39** — mask account numbers in the payload.
+- **40** — extract the `signals`.
+- **41** — add `operator`: the director behind the merchant, from the registry.
+- **42–43** — attach the signals and return.
 
-### `_signals` (lines 41–42)
+### `_signals` (lines 46–47)
 
 Returns the stored signals, or extracts them for a report that did not come
 through `parse_record`.
 
-### `correlation_text` (lines 45–46)
+### `correlation_text` (lines 50–51)
 
 The text used for fuzzy matching: the channel and the payload.
 
-### `context_key` (lines 49–53)
+### `context_key` (lines 54–58)
 
 "Who is this message about": an explicit `context` if one was supplied,
 otherwise the merchant, otherwise the sender's domain.
 
-### `link_keys` (lines 56–68)
+### `link_keys` (lines 61–73)
 
 Identifiers that tie messages together. Returns a set of strings.
 
-- **59** — `merchant:<name>`.
-- **60–61** — `ref:<reference>`: the full payment reference. The same
+- **64** — `merchant:<name>`.
+- **65–66** — `ref:<reference>`: the full payment reference. The same
   reference means the same mandate.
-- **62–63** — `operator:<director>`: two company names with one director link
+- **67–68** — `operator:<director>`: two company names with one director link
   here. This is how a scammer who re-registers under a new name is recognised.
-- **64** — `phone:<digits>` for each phone number in the message.
-- **65** — `domain:<domain>` for each domain, except shared mail providers.
-- **66–67** — for a shared mail provider, the full sender address instead.
+- **69** — `phone:<digits>` for each phone number in the message.
+- **70** — `domain:<domain>` for each domain, except shared mail providers.
+- **71–72** — for a shared mail provider, the full sender address instead.
 
-### `parse_timestamp` (lines 71–88)
+### `parse_timestamp` (lines 76–93)
 
 Never raises. Tries the standard ISO format, then a few common others.
 Returns `None` for anything unreadable. A time with no zone is treated as UTC.
-The extra formats are listed on line 16.
+The extra formats are listed on line 21.
 
-### `risk_persists` (lines 91–93)
+### `risk_persists` (lines 96–98)
 
 True while the incident's severity is `HIGH` or `CRITICAL`.
 
-### `review_audience` (lines 96–98)
+### `review_audience` (lines 101–103)
 
 Who a review is addressed to. `CAREGIVER` when a guardian is enrolled,
 otherwise `PERSON`. The engine calls this when it opens a review.
 
-### `_withdrawal` (lines 101–117)
+### `_withdrawal` (lines 106–122)
 
 Called when the person says a charge or sender is legitimate.
 
-- **103** — `strong` is true if the incident was `HIGH` or `CRITICAL`.
-- **104–105** — the `WITHDRAW` action, naming the incident's merchant.
-- **106–109** — strong evidence and a guardian is enrolled: confidence is set
+- **108** — `strong` is true if the incident was `HIGH` or `CRITICAL`.
+- **109–110** — the `WITHDRAW` action, naming the incident's merchant.
+- **111–114** — strong evidence and a guardian is enrolled: confidence is set
   to 0.5 and a `review_reason` is given. Because 0.5 is below 0.75, the
   guardrails hold the withdrawal for the caregiver. A scammer on the phone can
   tell someone to tap "it's fine"; this is the defence against that.
-- **110–114** — strong evidence and **no guardian**: there is nobody else to
+- **115–119** — strong evidence and **no guardian**: there is nobody else to
   ask, so the decision is slowed down instead. The withdrawal is held for the
   person themselves with `review_delay_seconds` set to the cooling-off period.
   A pressured decision made during a phone call cannot take effect at once.
-- **115–117** — otherwise: confidence 0.95, ask for `RESOLVED`, and the
+- **120–122** — otherwise: confidence 0.95, ask for `RESOLVED`, and the
   withdrawal runs automatically.
 
-### `learn_from_review` (lines 120–126)
+### `learn_from_review` (lines 125–131)
 
 The engine calls this when a human rejects a review.
 
-- **122–123** — only a rejected warning or sender block teaches anything.
-- **124–126** — remember the message's sender in `known_senders`.
+- **127–128** — only a rejected warning or sender block teaches anything.
+- **129–131** — remember the message's sender in `known_senders`.
 
 The next doubtful message from that sender is then not raised again. It is
 learning from the human, in memory, not retraining any rule or model.
 
-### `_kind_wording` (lines 129–136)
+### `_kind_wording` (lines 134–141)
 
-- **131–132** — unless `ENABLE_GEMINI=1`, return the standard wording unchanged.
-- **133–134** — otherwise ask Gemini to reword it.
-- **135–136** — if Gemini fails, or its message fails the safety check, use
+- **136–137** — unless `ENABLE_GEMINI=1`, return the standard wording unchanged.
+- **138–139** — otherwise ask Gemini to reword it.
+- **140–141** — if Gemini fails, or its message fails the safety check, use
   the standard wording.
 
-### `assess` (lines 139–233)
+### `assess` (lines 144–244)
 
 Called once per message. Returns an `Assessment`.
 
-**Gather (140–151)**
-- **140** — the message's signals.
-- **141–142** — feedback from the person takes the withdrawal path.
-- **144** — `is_debit` and `is_mandate`.
-- **145** — `when`: the message's time, or now if it has none.
-- **146** — `verdict` from the gate. `ask_jev` is passed only when
+**Gather (145–156)**
+- **145** — the message's signals.
+- **146–147** — feedback from the person takes the withdrawal path.
+- **149** — `is_debit` and `is_mandate`.
+- **150** — `when`: the message's time, or now if it has none.
+- **151** — `verdict` from the gate. `ask_jev` is passed only when
   `ENABLE_JEV=1`; otherwise the gate runs on rules alone.
-- **147–149** — investigate if it is a debit, a mandate request, or if the
+- **152–154** — investigate if it is a debit, a mandate request, or if the
   gate score reached `GATE_THRESHOLD`.
-- **150–151** — remember this debit's amount for next time, after the
+- **155–156** — remember this debit's amount for next time, after the
   investigation, so the debit is not compared with itself.
 
-**Score (153–170)**
-- **153** — `price_jump` is true if the history finding carried the jump weight.
-- **154** — `trusted`: the person confirmed this merchant, and the price has
+**Score (158–175)**
+- **158** — `price_jump` is true if the history finding carried the jump weight.
+- **159** — `trusted`: the person confirmed this merchant, and the price has
   not jumped. Trust does not cover a jump.
-- **155** — `risk` is 0 for a trusted merchant; otherwise the gate score plus
+- **160** — `risk` is 0 for a trusted merchant; otherwise the gate score plus
   the finding weights, capped at 1.
-- **156–158** — `known`: a human already cleared this sender, and the risk is
+- **161–163** — `known`: a human already cleared this sender, and the risk is
   below `CONTAIN_THRESHOLD`. Then the risk is set to 0. Strong evidence still
   overrides it, because a sender name can be spoofed.
-- **159** — `evidence` is every reason that added risk.
-- **160** — `established`: the company was identified and is older than
+- **164** — `evidence` is every reason that added risk.
+- **165** — `established`: the company was identified and is older than
   `YOUNG_DAYS`.
-- **161–164** — **the mandate rule.** A request to set up a debit is advised
+- **166–169** — **the mandate rule.** A request to set up a debit is advised
   against unless the merchant is trusted, or is an established company with
   clean wording. The reason is the DebiCheck rule: once a mandate is approved,
   its debits cannot be disputed. So the agent's most useful moment is before
   approval, and the default there is "do not approve what we cannot verify".
   The risk is raised to at least the threshold and the reason is recorded.
-- **165–167** — `threat`: the gate's answer, except that a message with clean
+- **170–172** — `threat`: the gate's answer, except that a message with clean
   wording but risky findings is not called benign.
-- **168–169** — `labels`: threat, merchant and registration number.
-- **170** — `stay`: the state to ask for when nothing should change.
+- **173–174** — `labels`: threat, merchant and registration number.
+- **175** — `stay`: the state to ask for when nothing should change.
 
-**Benign (172–176)** — below the threshold: `LOW`, no action.
+**Benign (177–181)** — below the threshold: `LOW`, no action.
 
-**Suspicious (178–188)**
-- **178** — `confidence` starts at 0.55 and rises 0.1 per piece of evidence,
+**Suspicious (183–193)**
+- **183** — `confidence` starts at 0.55 and rises 0.1 per piece of evidence,
   capped at 0.95. One weak signal gives 0.65, below 0.75, so a human sees it.
-- **179** — `rationale` lists the evidence, then the gate's notes.
-- **180–181** — `conflict`: suspicious wording, but a tool found the sender
+- **184** — `rationale` lists the evidence, then the gate's notes.
+- **185–186** — `conflict`: suspicious wording, but a tool found the sender
   established. That contradiction goes to a human.
-- **182–183** — `disputed`: has a dispute for this incident actually been lodged?
-- **184** — `shared_provider`: is the sender on a shared mail provider?
-- **185** — `who`: a name for the messages.
-- **186** — defaults: `MEDIUM`, ask for `CONTAINED`.
-- **188** — `amount_text`: the amount in words for messages, or "an amount".
+- **187–188** — `disputed`: has a dispute for this incident actually been lodged?
+- **189** — `shared_provider`: is the sender on a shared mail provider?
+- **190** — `who`: a name for the messages. The merchant if there is one;
+  otherwise the sender itself for a shared mail provider or an SMS (which has
+  no domain), and the sender's domain for other email. Before this, every SMS
+  warning said "an unknown sender".
+- **191** — defaults: `MEDIUM`, ask for `CONTAINED`.
+- **193** — `amount_text`: the amount in words for messages, or "an amount".
 
-**The response ladder (189–225)**
-- **189–195** — a mandate request: `ADVISE_DECLINE`. The message tells the
+**The response ladder (194–237)**
+- **194–200** — a mandate request: `ADVISE_DECLINE`. The message tells the
   person who is asking, for how much, and that it is hard to reverse once
   approved. `HIGH` for R300 or more. Nothing is contained, because the choice
   is the person's; the state is `INVESTIGATING`. This action is on the safe
   list, so it is delivered at once without waiting for anyone.
-- **196–201** — a debit arrives after a dispute was lodged. The dispute did
+- **201–206** — a debit arrives after a dispute was lodged. The dispute did
   not stop the operator, so escalate to `BLOCK_OPERATOR`, severity `HIGH`. The
   agent learns its earlier action failed from the next message, not from the
   tool. `ask` is the plain question shown to whoever approves.
-- **202–208** — a suspicious debit from an identified company:
-  `DRAFT_DISPUTE`, `HIGH` if the amount is R300 or more. Line 207 sets
+- **207–213** — a suspicious debit from an identified company:
+  `DRAFT_DISPUTE`, `HIGH` if the amount is R300 or more. Line 212 sets
   `dispute_by`: the message date plus `DISPUTE_WINDOW_DAYS`.
-- **209–213** — a suspicious debit from an unidentified merchant: only warn
+- **214–219** — a suspicious debit from an unidentified merchant: only warn
   the person, and ask for a human.
-- **215–220** — a suspicious message at or above `CONTAIN_THRESHOLD`:
+- **220–225** — an unrequested loan, credit or insurance offer
+  (`SALES_OFFER`): only warn, `LOW`, whatever the score. The sender may be a
+  real bank or insurer, so it is never blocked, even when a second rule pushes
+  the risk past `CONTAIN_THRESHOLD`. The warning explains that replying YES
+  agrees to a sales call and that these often end in a debit order. This
+  branch comes before the containment branch on purpose.
+- **226–231** — a suspicious message at or above `CONTAIN_THRESHOLD`:
   `FLAG_SENDER`, `HIGH` for tech-support or identity threats. The target is
   the single address for a shared provider, otherwise the whole domain.
-- **222–225** — a mildly suspicious message: `WARN_PERSON`, `LOW`.
+- **233–237** — a mildly suspicious message: `WARN_PERSON`, `LOW`.
 
 Every action on the ladder carries `ask`: a plain question for whoever has
 to approve it, the caregiver or, with no guardian, the person. It was added
 after the first real sync held a warning whose only explanation was
 "Confidence below 0.75". The question never goes to a model.
 
-**Finish (228–233)**
-- **228–229** — if the action carries a message for the person, pass it
-  through `_kind_wording`.
-- **230–231** — a resolved incident that receives new suspicious evidence is
+**Finish (239–244)**
+- **239–240** — if the action carries a message for the person, add the
+  threat's hint from `THREAT_HINTS`, then pass it through `_kind_wording`.
+- **241–242** — a resolved incident that receives new suspicious evidence is
   asked to reopen.
-- **232–233** — return the assessment.
+- **243–244** — return the assessment.
 
 ### What this file does not do
 

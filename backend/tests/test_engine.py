@@ -23,7 +23,7 @@ from calibrate import load_labelled, sweep
 from collect_sms import collect, looks_personal, mask_for_labelling
 from core.jev import system_one
 from domain.extract import extract_signals, redact
-from domain.gate import gate
+from domain.gate import TEXT_RULES, gate
 from domain.investigate import investigate
 from domain.language import write_person_message
 from domain.intake import email_to_row
@@ -702,6 +702,30 @@ class WhatsAppAndNewScamTests(unittest.TestCase):
         text = "Your inheritance is ready for release once the clearance fee is paid."
         self.assertEqual(gate(text, extract_signals(text, {})).threat, ThreatDomain.ADVANCE_FEE)
 
+    def test_opt_out_wording_and_shop_vouchers_are_not_suspicious(self):
+        for ordinary in ("Dear Student, join us for Open Day on Saturday. Reply STOP to opt out",
+                         "Woolies: Activate your voucher on our app before your next shop.",
+                         "Telkom: out of bundle voice rates increase to 75c from 1 August."):
+            self.assertLess(gate(ordinary, extract_signals(ordinary, {})).score, 0.3, ordinary)
+        for suspicious in ("Win tickets! Dial *180*6# @ R1/day. First day FREE.", "Buy a Google Play voucher and send me the code."):
+            self.assertGreaterEqual(gate(suspicious, extract_signals(suspicious, {})).score, 0.3, suspicious)
+
+    def test_job_scams_are_named(self):
+        for text in ("We are currently hiring online part-time staff Daily salary: R800. Click wa.me/27600000000",
+                     "Recruiting jobs for $3-10/day +WS https://to0.xyz/b/abc",
+                     "ATH Hash invites you to earn 515 ZAR, small investment, big return"):
+            self.assertEqual(gate(text, extract_signals(text, {})).threat, ThreatDomain.JOB_SCAM, text)
+
+    def test_credit_and_insurance_offers_are_warned_about_but_never_blocked(self):
+        runtime = TriageRuntime()
+        text = "RCS STORE CARD: you've been selected to apply for up to R55 000 credit Click: https://m-s.pe/Gr No=out"
+        decision = runtime.process(message("C1", text))
+        self.assertEqual(decision.labels["threat"], ThreatDomain.SALES_OFFER.value)
+        self.assertEqual(decision.proposed_action.type, ActionType.WARN_PERSON)  # scores 0.6 with the prize rule, still not blocked
+        self.assertIn("You do not have to reply", decision.proposed_action.details["message"])
+        honest = "Reply YES for help with your application. No=out"
+        self.assertLess(gate(honest, extract_signals(honest, {})).score, 0.3)
+
     def test_whatsapp_webhook_takes_in_the_message_and_never_replies(self):
         body = "From=whatsapp%3A%2B27825550199&Body=Hi+mom+this+is+my+new+number.+Please+send+R2000+today."
         response = self.client.post("/api/intake/whatsapp", content=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
@@ -878,9 +902,7 @@ class LearningTests(unittest.TestCase):
     def test_a_rejected_doubtful_warning_is_not_raised_again_for_that_sender(self):
         runtime = TriageRuntime()
         promo = "Your account has been recharged with R 5.00 and you have received R 5.00 FREE airtime."
-        answers = {"urgency": 0.0, "credentials": 0.0, "payment": 0.0, "subscription": 0.0, "prize": 0.84, "claim": 0.0,
-                   "premium": 0.0, "impersonation": 0.0, "money": 0.0, "advance_fee": 0.0}
-        fake = {key: {"type": "noul", "noul": value} for key, value in answers.items()}
+        fake = {key: {"type": "noul", "noul": 0.84 if key == "prize" else 0.0} for key in TEXT_RULES}
         fake["threat"] = {"type": "choice", "choice": "PRIZE_SCAM", "confidence": 0.9}
         with patch.dict("os.environ", {"ENABLE_JEV": "1"}), patch("domain.gate.system_one", return_value=fake):
             first = runtime.process(message("L1", promo))

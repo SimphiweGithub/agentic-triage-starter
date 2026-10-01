@@ -61,4 +61,6 @@ class ThreatDomain(str, Enum):
     PRIZE_SCAM = "PRIZE_SCAM"
     IMPERSONATION = "IMPERSONATION"
     ADVANCE_FEE = "ADVANCE_FEE"
+    JOB_SCAM = "JOB_SCAM"
+    SALES_OFFER = "SALES_OFFER"  # not a scam, but replying YES leads to a policy or loan with a debit order
     UNKNOWN = "UNKNOWN"

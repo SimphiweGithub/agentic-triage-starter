@@ -167,12 +167,49 @@ Every fifth message was held out; rules were written from the other four fifths.
 | Original four | Whole dataset | 17 of 747 (2%) | 4 of 4,827 |
 | Seven, after adding prize, claim and premium-rate rules | Held-out fifth | 83 of 156 (53%) | 2 of 959 |
 | Seven rules plus Jev (real API calls) | Held-out fifth | 135 of 156 (87%) | 6 of 959 |
+| Twelve rules, after the South African changes below | Held-out fifth | 75 of 156 (48%) | 3 of 959 |
+| Twelve rules plus Jev, narrowed questions | Held-out fifth | 104 of 156 (67%) | 7 of 959 |
 
 What we learned: rules written from intuition missed almost everything in
-real spam. Rules alone now catch about half with few false alarms. Jev
-recovers most of the rest at a cost of four more false alarms and about 0.4
-seconds per message. The dataset is
-general UK SMS spam, so it is a stand-in for our target messages.
+real spam. Jev recovers much of what the rules miss, at about 0.4 seconds
+per message. The dataset is general UK SMS spam, so it is a stand-in for our
+target messages; the last two rows show the price of fitting South Africa
+instead.
+
+**Our own South African SMS (148 texts from one phone, 16 labelled scam).**
+
+| Gate, threshold 0.30 | Caught | False alarms of 132 |
+|---|---|---|
+| Ten rules, before | 4 of 16 | 30 |
+| Ten rules plus Jev, before | 5 of 16 | 49 |
+| Twelve rules | 16 of 16 | 3 |
+| Twelve rules plus Jev, narrowed questions | 16 of 16 | 9 |
+
+The first two rows are why we changed anything. What was wrong:
+
+- The premium-rate rule fired on "Reply STOP to opt out". South African
+  direct-marketing texts must offer an opt-out, so 25 of the 30 false alarms
+  were ordinary college and network adverts. Opt-out wording was removed from
+  the rule: it is a sign of lawful marketing, not of a scam. A voucher on its
+  own was removed from the payment rule for the same reason.
+- There was no rule for the scams the phone actually received: "work from
+  home, daily salary" recruitment and "small investment, big return" offers
+  (new `job` rule, threat `JOB_SCAM`).
+- Ten of the 16 labelled scams were unrequested loan, credit-card and funeral or
+  life cover offers: "Reply YES (free) for a quote, No=out". These are not
+  fraud, and we do not call them that. But replying YES starts a sales call
+  that often ends in a policy with a debit order, which is the harm Scam Stop
+  exists to prevent. New `cold_offer` rule, threat `SALES_OFFER`; the response
+  is a plain warning and the sender is never blocked, because it may be a
+  real bank or insurer.
+- Jev's `claim` and `premium` questions said yes to every "Dial *123# to buy
+  a bundle" advert. Narrowing them removed 16 of Jev's false alarms here and
+  cost 27 UK catches. We chose South Africa.
+
+The honest caveat: every change was chosen by looking at these same 148
+messages, so 16 of 16 is a training score, not evidence. It shows the rules
+describe what this phone receives. The evidence is new messages we did not
+tune on, such as the scams our test bot sends.
 
 **Live domain lookup.** Tested against real domains through RDAP. `.co.za`
 domains are not covered by that service and come back as unknown.
@@ -225,7 +262,7 @@ South African messages labelled as scam or not by someone outside the team.
 
 **Still to measure**
 
-- The gate on South African messages labelled by someone outside the team.
+- The gate on South African messages it was not tuned on, labelled by someone outside the team.
 - Jev's 0.7 cut-off, which has never been tuned.
 - The live mailbox against a real mailbox, and the WhatsApp webhook against a real gateway.
 
@@ -238,7 +275,8 @@ Jev and Gemini are real. A dispute is drafted, not lodged.
 **What is not measured.** The cooling-off length, the risk weights, the 0.6 containment threshold,
 the R300 amount, the 90-day "new" rule, the price-jump ratio and the
 name-similarity cut-off are judgement calls. The gate was measured on UK SMS
-spam, not on the messages we are aiming at.
+spam and on 148 South African texts that the latest rules were written from;
+it has not been measured on South African messages it was not tuned on.
 
 **What the design cannot do**
 

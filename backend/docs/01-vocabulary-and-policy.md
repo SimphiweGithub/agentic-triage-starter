@@ -81,10 +81,15 @@ What the engine did with a proposed action.
 | `SUPPRESSED_DUPLICATE` | Not run because the message was a duplicate |
 | `SUPPRESSED_REPEAT` | Not run because the same action was already taken |
 
-### `ThreatDomain` (lines 56–64)
+### `ThreatDomain` (lines 56–66)
 
 The kind of threat: `BENIGN`, `GREY_MARKET_SUBSCRIPTION`, `IDENTITY_FARMING`,
-`TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `IMPERSONATION`, `ADVANCE_FEE`, `UNKNOWN`.
+`TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `IMPERSONATION`, `ADVANCE_FEE`,
+`JOB_SCAM`, `SALES_OFFER`, `UNKNOWN`.
+
+`SALES_OFFER` (line 65) is the one that is not a scam: an unrequested loan,
+credit or insurance offer, where replying YES leads to a policy or loan with a
+debit order. It is warned about, never blocked.
 
 ---
 

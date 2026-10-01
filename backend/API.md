@@ -174,7 +174,7 @@ actions that were deliberately not repeated.
 | `relationship` | `NEW`, `RELATED`, `DUPLICATE` |
 | `proposed_action.type` | `WARN_PERSON`, `ADVISE_DECLINE`, `FLAG_SENDER`, `DRAFT_DISPUTE`, `BLOCK_OPERATOR`, `WITHDRAW` |
 | `action_outcome` | `NONE`, `PROPOSED`, `EXECUTED`, `FAILED`, `HELD_FOR_REVIEW`, `SUPPRESSED_DUPLICATE`, `SUPPRESSED_REPEAT` |
-| `labels.threat` | `BENIGN`, `GREY_MARKET_SUBSCRIPTION`, `IDENTITY_FARMING`, `TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `IMPERSONATION`, `ADVANCE_FEE`, `UNKNOWN` |
+| `labels.threat` | `BENIGN`, `GREY_MARKET_SUBSCRIPTION`, `IDENTITY_FARMING`, `TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `IMPERSONATION`, `ADVANCE_FEE`, `JOB_SCAM`, `SALES_OFFER` (an unrequested loan or insurance offer; not a scam, only warned about), `UNKNOWN` |
 | `status` (review) | `PENDING`, `APPROVED`, `REJECTED`, `APPROVED_ACTION_FAILED`, `SUPERSEDED` |
 
 ## Disputes
