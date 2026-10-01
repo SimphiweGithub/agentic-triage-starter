@@ -43,6 +43,7 @@ public class SmsInboxPlugin extends Plugin {
         if (NotificationManagerCompat.getEnabledListenerPackages(getContext()).contains(getContext().getPackageName())) {
             NotificationBridge.rebind(getContext());
         }
+        Forwarder.retry(getContext());  // send anything that waited while the server could not be reached
     }
 
     /** Asks for SMS access if needed. Resolves with {granted: true|false}. */
@@ -76,6 +77,7 @@ public class SmsInboxPlugin extends Plugin {
     /** Whether the bridge can work, and how it is doing. */
     @PluginMethod
     public void bridgeStatus(PluginCall call) {
+        Forwarder.retry(getContext());  // the open app checks every few seconds, so a waiting queue goes as soon as the server is back
         SharedPreferences prefs = Forwarder.prefs(getContext());
         int queued;
         try {

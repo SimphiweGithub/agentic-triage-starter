@@ -73,6 +73,16 @@ final class Forwarder {
         }
     }
 
+    /** Try again to send whatever is waiting, for example after the server or the USB link was down. */
+    static void retry(Context context) {
+        Context app = context.getApplicationContext();
+        WORKER.execute(() -> {
+            if (configured(app)) {
+                flush(app);
+            }
+        });
+    }
+
     /** Queue one message and try to send everything waiting. Runs off the main thread. */
     static void forward(Context context, String channel, String sender, String text, long millis) {
         forward(context, channel, sender, text, millis, null);

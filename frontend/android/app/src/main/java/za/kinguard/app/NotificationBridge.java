@@ -43,6 +43,7 @@ public class NotificationBridge extends NotificationListenerService {
     /** On connecting, check what is already in the tray: messages that came while the listener was away. Repeats are skipped. */
     @Override
     public void onListenerConnected() {
+        Forwarder.retry(this);
         try {
             for (StatusBarNotification posted : getActiveNotifications()) {
                 onNotificationPosted(posted);
