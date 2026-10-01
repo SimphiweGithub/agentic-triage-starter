@@ -41,6 +41,11 @@
     --color-warn-soft: var(--warn-soft);
     --color-warn-edge: var(--warn-edge);
     --color-terminal: var(--terminal);
+    /* Role colours for the care circle. Each role chip also shows its name, so colour is never the only cue. */
+    --color-kin: var(--kin);
+    --color-kin-soft: var(--kin-soft);
+    --color-helper: var(--helper);
+    --color-helper-soft: var(--helper-soft);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -51,7 +56,7 @@
 }
 
 :root {
-    --background: #f4f5f1;
+    --background: #f3f4ef;
     --foreground: #17201d;
     --card: #ffffff;
     --card-foreground: #17201d;
@@ -84,6 +89,10 @@
     --warn-soft: #fcebd7;
     --warn-edge: #e8a15c;
     --terminal: #17201d;
+    --kin: #5b3a8c;
+    --kin-soft: #eee8f6;
+    --helper: #4a5550;
+    --helper-soft: #eceeea;
 }
 
 .dark {
@@ -119,6 +128,10 @@
     --warn-soft: #3a2a14;
     --warn-edge: #b9803a;
     --terminal: #0b0f0d;
+    --kin: #cdb8f0;
+    --kin-soft: #2d2340;
+    --helper: #c3ccc7;
+    --helper-soft: #2a302d;
 }
 
 @layer base {

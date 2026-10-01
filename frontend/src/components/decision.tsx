@@ -1,11 +1,9 @@
-import { CalendarClock, Clock } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { toast } from 'sonner'
-import { post, scoped } from '@/api'
+import { Banknote, CalendarClock, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { actionLabel, approveEffect, approveLabel, formatTime, PERSON, rejectEffect, reviewDeadline, reviewQuestion } from '@/format'
+import { approveEffect, approveLabel, formatTime, PERSON, rejectEffect, reviewDeadline, reviewQuestion } from '@/format'
 import type { GuardianBrief, Review } from '@/types'
 import { cn } from '@/lib/utils'
+import { useDecide } from './use-decide'
 
 type Props = {
   review: Review
@@ -18,28 +16,8 @@ type Props = {
 
 /** One question, two answers, and a line under each answer saying what it does. */
 export function ReviewCard({ review, brief, onDecided, embedded }: Props) {
-  const [busy, setBusy] = useState(false)
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000)
-    return () => clearInterval(timer)
-  }, [])
-
+  const { busy, waitUntil, decide } = useDecide(review, onDecided)
   const deadline = reviewDeadline(review)
-  const waitUntil = review.not_before && new Date(review.not_before).getTime() > now ? review.not_before : null
-
-  async function decide(approved: boolean) {
-    setBusy(true)
-    try {
-      await post(scoped(`/reviews/${review.review_id}/decision`), { approved })
-      const what = review.proposed_action ? actionLabel(review.proposed_action.type, review.proposed_action.details) : 'This alert'
-      onDecided(approved ? `Done: ${what}.` : `Understood. ${what} was not done.`)
-    } catch (caught) {
-      toast.error(caught instanceof Error ? caught.message : 'Could not save your answer. Try again.')
-    } finally {
-      setBusy(false)
-    }
-  }
 
   return (
     <section className={cn('grid gap-4', embedded ? '' : 'rounded-xl border-2 border-warn-edge bg-card p-4')} aria-label="Waiting for your decision">
@@ -80,5 +58,52 @@ export function ReviewCard({ review, brief, onDecided, embedded }: Props) {
         </Button>
       )}
     </section>
+  )
+}
+
+type RowProps = {
+  review: Review
+  meta: string
+  onDecided: (message: string) => void
+  onOpen: () => void
+  /** Why the signed-in user cannot answer, for roles that may only suggest. Undefined when they can. */
+  blocked?: string
+}
+
+/** A decision as one row of the Today list: the question, where it came from, and the answers as buttons. */
+export function DecisionRow({ review, meta, onDecided, onOpen, blocked }: RowProps) {
+  const { busy, waitUntil, decide } = useDecide(review, onDecided)
+  const deadline = reviewDeadline(review)
+  return (
+    <article className="grid gap-3 border-t border-warn-edge/40 px-5 py-4 first:border-t-0">
+      <div className="flex items-start gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-warn-soft text-warn">
+          <Banknote className="size-5" aria-hidden="true" />
+        </span>
+        <div className="grid min-w-0 flex-1 gap-1">
+          <strong className="text-base leading-snug">{reviewQuestion(review)}</strong>
+          <span className="text-sm text-muted-foreground">{meta}</span>
+          {deadline && <span className="text-sm font-bold text-warn">{deadline}</span>}
+          {waitUntil && <span className="text-sm font-bold text-warn">You can confirm this after {formatTime(waitUntil)}. Saying no is always possible.</span>}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 sm:pl-12">
+        {!blocked ? (
+          <Button className="h-11 px-5 text-base" disabled={busy || Boolean(waitUntil)} onClick={() => decide(true)}>
+            {approveLabel(review)}
+          </Button>
+        ) : (
+          <span className="self-center text-sm text-muted-foreground">{blocked}</span>
+        )}
+        <Button variant="outline" className="h-11 px-5 text-base" onClick={onOpen}>
+          See the evidence
+        </Button>
+        {!blocked && (
+          <Button variant="ghost" className="h-11 px-4 text-base" disabled={busy} onClick={() => decide(false)}>
+            No, leave it
+          </Button>
+        )}
+      </div>
+    </article>
   )
 }

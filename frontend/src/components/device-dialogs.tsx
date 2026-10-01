@@ -15,6 +15,7 @@ type Store = ReturnType<typeof useDevices>
 const CHANNEL_HOW: Record<Channel, string> = {
   SMS: 'Texts are shared to Scam Stop from the phone',
   WhatsApp: 'Messages are shared or forwarded to Scam Stop',
+  Calls: 'After a call from an unknown number, common call scams are shown. Calls are never heard or recorded',
 }
 
 /** One device: switch each channel on or off, rename it, or remove it. */
@@ -125,7 +126,7 @@ export function AddDeviceDialog({ open, store, onClose, onAdded }: { open: boole
 function AddBody({ store, onAdded }: { store: Store; onAdded: (id: string) => void }) {
   const [name, setName] = useState('')
   const [kind, setKind] = useState<DeviceKind>('phone')
-  const [chosen, setChosen] = useState<Channel[]>(['SMS', 'WhatsApp'])
+  const [chosen, setChosen] = useState<Channel[]>(['SMS', 'WhatsApp', 'Calls'])
   const possible = KIND_CHANNELS[kind]
   const on = chosen.filter((channel) => possible.includes(channel))
 
