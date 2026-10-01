@@ -1,5 +1,6 @@
 import { LocalNotifications } from '@capacitor/local-notifications'
 import { useCallback, useEffect, useState } from 'react'
+import { CallMonitor, type CallStatus } from './calls'
 import { SmsInbox, type BridgeStatus, type PhoneSms } from './sms'
 import './phone.css'
 
@@ -23,8 +24,12 @@ export function PhoneApp() {
   const [person, setPerson] = useState('')
   const [bridge, setBridge] = useState<BridgeStatus | null>(null)
   const [problem, setProblem] = useState('')
+  const [calls, setCalls] = useState<CallStatus | null>(null)
 
-  const checkBridge = useCallback(async () => setBridge(await SmsInbox.bridgeStatus().catch(() => null)), [])
+  const checkBridge = useCallback(async () => {
+    setBridge(await SmsInbox.bridgeStatus().catch(() => null))
+    setCalls(await CallMonitor.status().catch(() => null))
+  }, [])
   const smsAllowed = Boolean(bridge?.sms)
 
   // Pair: learn whose phone this is, then hand server, person, code and the privacy filter to the native bridge.
@@ -67,6 +72,17 @@ export function PhoneApp() {
     await checkBridge()
   }
 
+  async function allowCalls() {
+    await CallMonitor.requestAccess()
+    await LocalNotifications.requestPermissions() // the reminder is a notification
+    await checkBridge()
+  }
+
+  async function switchCalls(enabled: boolean) {
+    await CallMonitor.setEnabled({ enabled })
+    await checkBridge()
+  }
+
   const paired = Boolean(person && bridge?.configured)
   const ready = paired && Boolean(bridge?.sms && bridge.notificationAccess)
 
@@ -97,6 +113,18 @@ export function PhoneApp() {
           <strong>Allow WhatsApp to be checked</strong>
           <p className="muted">Android asks on its own screen: find Scam Stop in the list and switch it on.</p>
           {!bridge?.notificationAccess && <button type="button" onClick={() => SmsInbox.openNotificationAccess()}>Open Android settings</button>}
+        </li>
+        <li className={calls?.granted && calls.enabled ? 'done' : ''}>
+          <strong>Warn me after phone calls</strong>
+          <p className="muted">
+            When a call ends, Scam Stop reminds you of common phone scams. It never listens to calls and never sees who called.
+            {calls?.lastCall ? ` Last call: ${new Date(calls.lastCall).toLocaleString()}.` : ''}
+          </p>
+          {!calls?.granted ? (
+            <button type="button" onClick={allowCalls}>Allow</button>
+          ) : (
+            <button type="button" onClick={() => switchCalls(!calls.enabled)}>{calls.enabled ? 'Turn off' : 'Turn on'}</button>
+          )}
         </li>
       </ol>
 

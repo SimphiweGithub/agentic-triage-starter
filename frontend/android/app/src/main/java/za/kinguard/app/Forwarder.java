@@ -173,6 +173,9 @@ final class Forwarder {
                 }
             }
         }
+        if (!messages.isEmpty()) {
+            prefs(app).edit().putLong("lastWarningAt", System.currentTimeMillis()).apply();  // CallReceiver: a call soon after is suspect
+        }
         if (messages.isEmpty() || !NotificationManagerCompat.from(app).areNotificationsEnabled()) {
             return;
         }

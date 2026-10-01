@@ -22,7 +22,9 @@ WhatsApp ─► NotificationBridge (notification access) ─┼─► Forwarder 
 | New texts, even with the app closed | `.../SmsReceiver.java`, declared in the manifest |
 | WhatsApp, WhatsApp Business, Telegram, Messenger and Signal | `.../NotificationBridge.java`, a `NotificationListenerService` |
 | First sync of the last week, bridge settings and status, opening Android's notification access screen | `.../SmsInboxPlugin.java` |
-| Registering that plugin | `.../MainActivity.java` |
+| Call reminders: hears a call ring and end, then shows common call scams | `.../CallReceiver.java`, declared in the manifest |
+| Call reminders: permission, on/off, last call time | `.../CallMonitorPlugin.java`, `src/phone/calls.ts` |
+| Registering the plugins | `.../MainActivity.java` |
 | Permissions, the receiver and the listener service | `android/app/src/main/AndroidManifest.xml` |
 | The set-up and status screen | `src/phone/PhoneApp.tsx` |
 | Phone or browser? | `src/main.tsx` |
@@ -76,6 +78,20 @@ To use Wi-Fi instead of USB, start the backend with `--host 0.0.0.0` and put
 the laptop's address, for example `http://192.168.1.20:8000`, under Settings
 in the app.
 
+## Call reminders
+
+When an incoming call ends, a notification lists common phone scams (bank,
+"grandchild in trouble", prizes, SIM-swap codes, tax or fines, remote-access
+apps) and the rule: hang up and call the number on your card yourself. If the
+agent warned about a scam message in the 2 hours before the call, the
+notification says so first, because scammers often text, then call.
+
+`CallReceiver` only reads the phone's state: ringing, in a call, idle. It never
+hears the call and never learns the number, which would need call-log access.
+Android delivers this broadcast with the app closed. Outgoing calls are
+ignored; a missed call and an answered one are worded differently. The person
+can switch reminders off on the phone.
+
 ## Limits to say out loud
 
 - WhatsApp is read from its notifications, so a message whose notification is
@@ -92,7 +108,11 @@ in the app.
   USB link away. If the phone stops reaching the server, close Nox, restart
   adb and run `adb reverse tcp:8000 tcp:8000` again.
 - Google Play only allows SMS reading for the default SMS app, so this is
-  installed directly, not through the Play Store.
+  installed directly, not through the Play Store. The call reminders need only
+  `READ_PHONE_STATE`, which Play allows.
+- The call reminder is the same list of scams after every call: without the
+  number it cannot tell a scammer from a friend, except through the timing of
+  a recent scam message.
 - The caregiver dashboard with Google sign-in stays in the browser, because
   Google blocks sign-in inside app web views.
 - The phone does not sign in; it pairs with a code from the dashboard. Anyone
