@@ -20,7 +20,7 @@ class NewPerson(BaseModel):
 def _mailbox(row: dict) -> dict:
     """A mailbox as the front end sees it: its state, never a token or a message."""
     return {"id": row["id"], "kind": row["kind"], "label": row["label"], "status": row["status"], "connected_at": row["connected_at"],
-            "last_checked": row["last_checked"], "last_error": row["last_error"], "checked": row["checked"]}
+            "last_checked": row["last_checked"], "last_error": row["last_error"], "checked": row["checked"], "can_bin": bool(row["can_bin"])}
 
 
 def _invite(row: dict) -> dict:

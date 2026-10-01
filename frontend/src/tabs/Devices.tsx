@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { KIND_CHANNELS, KIND_LABEL, channelActivity, deviceGaps, type Device } from '@/devices'
-import { CHANNELS, PERSON, formatTime } from '@/format'
+import { CHANNELS, PERSON, binNotAllowed, formatTime } from '@/format'
 import type { KinGuardState, Mailbox } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -170,6 +170,12 @@ function Mailboxes({ mailboxes, onInvite }: { mailboxes: Mailbox[]; onInvite: ()
                 </span>
               </div>
               <Badge className={cn('h-6 px-3 text-sm font-bold', STATUS_STYLE[mailbox.status])}>{STATUS_WORD[mailbox.status]}</Badge>
+              {binNotAllowed(mailbox) && (
+                <p className="basis-full rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn">
+                  Scam Stop can read this Gmail but not move scam emails to the Bin. Send {PERSON.name} a new invite link so they can allow it.
+                </p>
+              )}
+              {mailbox.kind === 'gmail' && mailbox.can_bin && <p className="basis-full text-sm text-muted-foreground">Scam emails are moved to the Bin.</p>}
             </li>
           ))}
         </ul>

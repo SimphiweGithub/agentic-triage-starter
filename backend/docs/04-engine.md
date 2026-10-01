@@ -215,9 +215,9 @@ messages per person. For many thousands it would need a database.
 - **21–27 `in_own_world`** — a decorator. The wrapped method runs holding the
   lock, with this runtime's own world active (25), so the domain code's
   `WORLD` means this person's world. It is on every method that reads or
-  changes the world: `reset` (50), `save` (55), `process` (110),
-  `record_failure` (195), `process_safely` (216), `step` (231),
-  `decide_review` (239) and `move_state` (268).
+  changes the world: `reset` (50), `save` (55), `process` (118),
+  `record_failure` (212), `process_safely` (233), `step` (248),
+  `decide_review` (256) and `move_state` (285).
 - **31** — the constructor takes an optional `world` and `person_id`.
 - **32** — `self.lock` is a re-entrant lock: only one message is processed at
   a time for this person, so two web requests cannot corrupt the state. Other
@@ -257,120 +257,135 @@ messages per person. For many thousands it would need a database.
 Every method that changes state ends with `store.save(self)`: after each
 message, each failure, each review decision and each manual state change.
 
-### Small helpers (lines 78–107)
+### Small helpers (lines 78–115)
 
 - **78–82 `_new_incident`** — creates `I0001`, `I0002`, ... in state `NEW`,
   severity `LOW`, confidence 0, with the first 240 characters as the summary.
 - **84–93 `_assess`** — calls the domain's `assess`. If model assessment is
   enabled and fails, it falls back to the rules and says so in the rationale.
-- **95–96 `_pending`** — the reviews for an incident that are still `PENDING`.
-- **98–107 `_open_review`** — if a pending review with the same reason already
+- **95–101 `_already_taken`** — true when the same action type and service is
+  already `ENGAGED` for this incident and, for types in `ACTION_IDENTITY`, the
+  named detail matches too. `REPEATABLE_ACTIONS` are never "already taken".
+  Used for both the main action and the follow-up.
+- **103–104 `_pending`** — the reviews for an incident that are still `PENDING`.
+- **106–115 `_open_review`** — if a pending review with the same reason already
   exists for the incident, return its ID. Otherwise create `REV-0001`, ....
-  This keeps the queue free of repeats. Lines 104–106 add two things to a new
+  This keeps the queue free of repeats. Lines 112–114 add two things to a new
   review: `audience`, from the domain's `review_audience()`, and `not_before`,
   which is now plus the delay when a cooling-off was asked for.
 
-### `process` (lines 110–192) — the main path
+### `process` (lines 118–209) — the main path
 
-**Idempotency (112–115)** — the same report ID with the same content returns the
+**Idempotency (120–123)** — the same report ID with the same content returns the
 earlier decision. The same ID with different content is an error.
 
-**Correlate and assess (116–120)**
-- **116** — `match` is the correlator's answer.
-- **117** — `incident` is a new one, or the matched one.
-- **118** — `previous` remembers the incident's state, severity and confidence
+**Correlate and assess (124–128)**
+- **124** — `match` is the correlator's answer.
+- **125** — `incident` is a new one, or the matched one.
+- **126** — `previous` remembers the incident's state, severity and confidence
   before this message (all `None` for a new incident).
-- **119** — `assessment` is the domain's proposal.
-- **120** — `trace` starts with the correlation line and the rationale.
+- **127** — `assessment` is the domain's proposal.
+- **128** — `trace` starts with the correlation line and the rationale.
 
-**Suppression (122–131)**
-- **123** — three variables: `action` (what will be attempted), `suppressed`
+**Suppression (130–136)**
+- **131** — three variables: `action` (what will be attempted), `suppressed`
   (what was deliberately not attempted), `outcome`.
-- **125–126** — a duplicate message never causes an action.
-- **127–131** — an action of the same type and service that is already
-  `ENGAGED` for this incident is not repeated. Line 129 adds one refinement:
-  for action types listed in `ACTION_IDENTITY`, the named detail must match
-  too. Flagging a second address is a different action from flagging the
-  first, so it is not suppressed.
+- **133–134** — a duplicate message never causes an action.
+- **135–136** — an action already taken for this incident (`_already_taken`)
+  is not repeated. Flagging a second address is a different action from
+  flagging the first, so it is not suppressed.
 
-**State machine (133–135)**
-- **133** — `next_state` is what the state machine grants.
-- **134** — `illegal` is true when the machine returned `PENDING_REVIEW` though
+**State machine (138–140)**
+- **138** — `next_state` is what the state machine grants.
+- **139** — `illegal` is true when the machine returned `PENDING_REVIEW` though
   something else was asked for.
-- **135** — the trace shows what was requested and what was granted.
+- **140** — the trace shows what was requested and what was granted.
 
-**Act, check, correct (137–156)**
-- **138** — `attempts` from the executor, or an empty list.
-- **139** — `action_trigger` will hold a reason to involve a human.
-- **141** — the final `action` and `outcome` are those of the last attempt.
-- **142** — all attempts go into the incident's action history.
-- **143** — one trace line per attempt, so a failure and its correction are
+**Act, check, correct (142–161)**
+- **143** — `attempts` from the executor, or an empty list.
+- **144** — `action_trigger` will hold a reason to involve a human;
+  `review_action` is set only when the follow-up, not the main action, is
+  what the human must decide.
+- **146** — the final `action` and `outcome` are those of the last attempt.
+- **147** — all attempts go into the incident's action history.
+- **148** — one trace line per attempt, so a failure and its correction are
   both visible.
-- **144–145** — held: the guardrail's reason becomes the trigger.
-- **146–147** — failed with no correction left: that becomes the trigger.
-- **148–151** — a superseding action (a withdrawal) ran: close the reviews
+- **149–150** — held: the guardrail's reason becomes the trigger.
+- **151–152** — failed with no correction left: that becomes the trigger.
+- **153–156** — a superseding action (a withdrawal) ran: close the reviews
   still waiting on this incident.
-- **152–154** — a suppressed action is recorded in the history with its
+- **157–159** — a suppressed action is recorded in the history with its
   suppression outcome.
-- **155–156** — no action at all is also recorded in the trace.
+- **160–161** — no action at all is also recorded in the trace.
 
-**One trigger (157–159)** — `trigger` is the single reason a human is needed,
+**Follow-up (163–172)** — the assessment may carry a second action, such as the
+Bin filter after a sender is flagged.
+- **165** — it is tried only when the main action ran (`EXECUTED`) and the
+  same follow-up was not already taken for this incident.
+- **166–168** — it goes through the executor, so the same guardrails gate it.
+  Each attempt joins the history and the trace as a `Follow-up:` line.
+- **169–172** — held or failed: that becomes the trigger, and the review
+  carries the follow-up action, so approving it runs the follow-up. The
+  decision itself still shows the main action.
+
+**One trigger (173–175)** — `trigger` is the single reason a human is needed,
 in priority order: illegal state change, a state that itself means review, an
 action that was held or failed, or the assessment's own `review_reason`.
 
-**Sticky review (161–176)**
-- **163–166** — a trigger opens (or re-uses) a review, sets the incident's
-  `review_hold`, and is traced.
-- **167** — `pending` reviews for the incident.
-- **168–173** — no new trigger but a hold exists: keep it while a review is
+**Sticky review (177–193)**
+- **179–183** — a trigger opens (or re-uses) a review, sets the incident's
+  `review_hold`, and is traced. The review carries the follow-up when the
+  follow-up set the trigger (180), and the main action otherwise.
+- **184** — `pending` reviews for the incident.
+- **185–190** — no new trigger but a hold exists: keep it while a review is
   pending or `risk_persists` is true; otherwise clear it.
-- **174** — `requires_review` is true for a trigger, a pending review, or a hold.
-- **175–176** — a trigger or a pending review forces the state to
+- **191** — `requires_review` is true for a trigger, a pending review, or a hold.
+- **192–193** — a trigger or a pending review forces the state to
   `PENDING_REVIEW`.
 
-**Record (178–192)**
-- **178–183** — update the incident: state, severity, confidence, labels, the
+**Record (195–209)**
+- **195–200** — update the incident: state, severity, confidence, labels, the
   new report ID, and the time.
-- **184–188** — build the `DecisionRecord`.
-- **189–192** — store the report and the decision, and return the decision.
+- **201–205** — build the `DecisionRecord`.
+- **206–209** — store the report and the decision, and return the decision.
 
-### Failure handling (lines 195–223)
+### Failure handling (lines 212–240)
 
-**`record_failure` (195–213)** — for a message that could not be parsed or
+**`record_failure` (212–230)** — for a message that could not be parsed or
 processed. It creates a new incident in `PENDING_REVIEW`, opens a review, and
 returns a valid decision whose trace holds the error. If the ID was already
-used, it adds a suffix (198–199).
+used, it adds a suffix (215–216).
 
-**`process_safely` (216–223)** — the entry point for batches and live intake.
+**`process_safely` (233–240)** — the entry point for batches and live intake.
 A parse error goes straight to `record_failure`; an exception during
 `process` is caught and goes there too. Every message gets a decision.
 
-### Replay (lines 225–236)
+### Replay (lines 242–253)
 
 **`load_queue`** resets and stores a list of messages. **`step`** processes the
 next `steps` messages and advances `position`.
 
-### `decide_review` (lines 239–265) — the caregiver's decision
+### `decide_review` (lines 256–282) — the caregiver's decision
 
-- **242–244** — a review can be decided once.
-- **245–249** — rejected: mark it, tell the domain through `learn_from_review`
-  (line 247) so the same doubt is not raised again, save, and stop. The action
+- **259–261** — a review can be decided once.
+- **262–266** — rejected: mark it, tell the domain through `learn_from_review`
+  (line 264) so the same doubt is not raised again, save, and stop. The action
   never runs.
-- **250–251** — cooling-off: if the review has a `not_before` time and it has
+- **267–268** — cooling-off: if the review has a `not_before` time and it has
   not arrived, approval is refused with an error. Rejecting is always allowed.
-- **252** — approved.
-- **253–256** — if the review carries an action, run it with
+- **269** — approved.
+- **270–273** — if the review carries an action, run it with
   `execute_approved` and add the result to the incident's history.
-- **257–258** — add a line to the original decision's trace.
-- **259–260** — the tool failed: the review is marked `APPROVED_ACTION_FAILED`.
-- **261–263** — otherwise, if no other review is pending, move the incident to
+- **274–275** — add a line to the original decision's trace.
+- **276–277** — the tool failed: the review is marked `APPROVED_ACTION_FAILED`.
+- **278–280** — otherwise, if no other review is pending, move the incident to
   the state in `STATE_AFTER_APPROVED` for that action, through the state machine.
 
-### `move_state` (lines 268–278)
+### `move_state` (lines 285–295)
 
 A human moving an incident by hand. Refused while reviews are pending, and
 refused if the state machine says the move is illegal.
 
-### `snapshot` (lines 280–284)
+### `snapshot` (lines 297–301)
 
 Everything the dashboard needs, copied under the lock.

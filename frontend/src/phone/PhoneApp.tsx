@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { CALL_SCAMS, duration } from '../calls'
 import { ROLE, type CircleRole } from '../circle'
 import type { CallAnswer } from '../calls'
+import { warnedAboutBin } from '../format'
 import type { Review } from '../types'
 import { answerCall, CallMonitor, type EndedCall } from './call-monitor'
 import { SmsInbox, type BridgeStatus, type PhoneSms } from './sms'
@@ -485,6 +486,7 @@ function ProtectedHome({ server, person, code, callsOn, onScams, onSetup }: { se
               I didn’t agree
             </button>
           </div>
+          {warnedAboutBin(warning.message) && <span className="muted">If this email is really yours, “This is mine” puts it back in your inbox.</span>}
         </section>
       )}
 

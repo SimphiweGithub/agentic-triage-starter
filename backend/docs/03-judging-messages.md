@@ -224,192 +224,243 @@ What this does and does not show:
 
 ## `domain/tools.py`
 
-### The world (lines 24–91)
+### The world (lines 28–97)
 
-- **Lines 24–32 `World`** — one object holding all of one person's outside state:
+- **Lines 28–38 `World`** — one object holding all of one person's outside state:
   - `outbox` — warnings shown to the person.
   - `flagged` — senders and domains marked as scammers. Their later messages
     are treated as high risk (see `assess`).
   - `disputes` — company registration number mapped to the dispute text.
   - `blocked` — operators the bank is asked to refuse.
-  - `known_senders` (line 31) — senders a human said were fine when a doubtful
+  - `known_senders` (line 35) — senders a human said were fine when a doubtful
     warning about them was held. See `learn_from_review`.
   - `trusted` — merchants the person confirmed as their own. This is the
     agent's memory across incidents.
   - `debits` — for each merchant, the amounts seen so far.
+  - `binned` (line 37) — what was moved to the person's Bin, keyed by
+    `"<action>:<report id>"`: the mailbox, the target, the message ids and,
+    for a filter, its id and whether Scam Stop created it. `withdraw` reads it
+    to put everything back.
   - `guardian` — whether a caregiver is enrolled. True unless
     `KINGUARD_GUARDIAN=0`, and changeable through the API.
-- **Line 36 `_default_world`** — the shared world, used when nobody asks for
+- **Line 41 `_default_world`** — the shared world, used when nobody asks for
   their own: the plain console, offline runs and the older tests.
-- **Line 37 `_active_world`** — a `ContextVar` holding the world that is active
+- **Line 42 `_active_world`** — a `ContextVar` holding the world that is active
   right now. A context variable belongs to the thread or task using it, so two
   people being processed at the same moment each see their own.
-- **Lines 40–51 `_ActiveWorld`** — a stand-in that forwards every read and write
-  to the active world (47–48, 50–51). It is why the rules and tools below can
+- **Lines 45–56 `_ActiveWorld`** — a stand-in that forwards every read and write
+  to the active world (52–53, 55–56). It is why the rules and tools below can
   keep writing `WORLD.flagged` without being told whose world they are in.
-- **Line 54 `WORLD`** — the stand-in. It always means the world of the person
+- **Line 59 `WORLD`** — the stand-in. It always means the world of the person
   being worked on.
-- **Lines 57–59 `default_world`** — returns the shared world.
-- **Lines 62–69 `use_world`** — a context manager: inside the block `WORLD`
+- **Lines 62–64 `default_world`** — returns the shared world.
+- **Lines 67–74 `use_world`** — a context manager: inside the block `WORLD`
   means the given world, and on leaving it goes back to what it was before
-  (65, 69), even if an error was raised.
-- **Lines 72–74 `reset_world`** — re-runs the initialiser of the active world,
+  (70, 74), even if an error was raised.
+- **Lines 77–79 `reset_world`** — re-runs the initialiser of the active world,
   emptying it.
 
-- **Lines 77–82 `world_state`** — the world as plain JSON values for saving;
-  sets become sorted lists.
-- **Lines 85–91 `restore_world`** — put a saved world back, turning the lists
-  into sets again.
+- **Lines 82–87 `world_state`** — the world as plain JSON values for saving;
+  sets become sorted lists. `binned` is already plain JSON.
+- **Lines 90–97 `restore_world`** — put a saved world back, turning the lists
+  into sets again. Files saved before `binned` existed load with it empty (96).
 
-### Fixture data (lines 95–106)
+### Fixture data (lines 101–112)
 
 Stand-ins for registries we cannot query. All names and domains are fictional.
 
-- **Lines 95–98 `DOMAIN_REGISTERED`** — domain to registration date. Used when
+- **Lines 101–104 `DOMAIN_REGISTERED`** — domain to registration date. Used when
   the live lookup is off or has no answer.
-- **Lines 101–106 `COMPANIES`** — for each company: `name`, `reg_no`,
+- **Lines 107–112 `COMPANIES`** — for each company: `name`, `reg_no`,
   `registered` date, `creditor_code` (the short code its debit references
   start with), and `director` (the person registered as controlling it).
   `TechCare Support` and `PC Care Services` have different names and codes but
   the same director, `D-7781`. That shared director is what makes them one
   operator.
 
-### `DISPUTE_STEPS` (lines 110–115)
+### `DISPUTE_STEPS` (lines 116–121)
 
 Four plain steps for lodging a dispute. They are general on purpose: each
 bank's screens differ, and we have not verified any bank's exact menu.
 
-### Date helpers (lines 118–124)
+### Date helpers (lines 124–130)
 
-- **118–119 `_days_between`** — days from a registration date to the message.
-- **122–124 `_parse_date`** — text to a date-time, assuming UTC if no zone is given.
+- **124–125 `_days_between`** — days from a registration date to the message.
+- **128–130 `_parse_date`** — text to a date-time, assuming UTC if no zone is given.
 
-### `_live_registration` (lines 129–143) — a real lookup
+### `_live_registration` (lines 135–149) — a real lookup
 
 Asks RDAP, the public service that holds domain registration records. Only
 the domain name is sent; nothing about the person or the message.
 
-- **131** — split the domain into its `labels` (`mail`, `shop`, `example`).
-- **132** — try the full name first, then drop leading labels, so
+- **137** — split the domain into its `labels` (`mail`, `shop`, `example`).
+- **138** — try the full name first, then drop leading labels, so
   `mail.shop.example` falls back to `shop.example`.
-- **133–134** — build the request with headers that identify the client.
-- **135–137** — send it with a 6-second timeout and read the `events` list.
-- **138–139** — a network failure, a "not found", or an unreadable reply moves
+- **139–140** — build the request with headers that identify the client.
+- **141–143** — send it with a 6-second timeout and read the `events` list.
+- **144–145** — a network failure, a "not found", or an unreadable reply moves
   on to the next attempt. Nothing is raised.
-- **140–142** — return the date of the `registration` event.
-- **143** — nothing found: `None`.
+- **146–148** — return the date of the `registration` event.
+- **149** — nothing found: `None`.
 
 Known limit: some registries, including `.co.za`, do not answer RDAP. Those
 domains come back as unknown.
 
-### `domain_age` (lines 146–155)
+### `domain_age` (lines 152–161)
 
-- **147** — start with no date.
-- **148–149** — if `KINGUARD_LIVE_LOOKUPS=1`, try the real lookup.
-- **150–151** — **fallback**: if the live lookup is off, failed, or had no
+- **153** — start with no date.
+- **154–155** — if `KINGUARD_LIVE_LOOKUPS=1`, try the real lookup.
+- **156–157** — **fallback**: if the live lookup is off, failed, or had no
   record, use the fixture table. This is a real tool failing and the agent
   carrying on with a second source.
-- **152–153** — still nothing: `ok=False`. The caller must cope with not knowing.
-- **154–155** — return the age in days, and say which source answered.
+- **158–159** — still nothing: `ok=False`. The caller must cope with not knowing.
+- **160–161** — return the age in days, and say which source answered.
 
-### `_similarity` (lines 158–160)
+### `_similarity` (lines 164–166)
 
 How alike two names are, from 0 to 1. Both are lower-cased and stripped of
 spaces and punctuation first, then compared character by character with
 `SequenceMatcher`. `TECHCRE SUP` against `TechCare Support` scores 0.80;
 against `PC Care Services` it scores 0.42.
 
-### `merchant_registry` (lines 163–180)
+### `merchant_registry` (lines 169–186)
 
-- **164** — `words` are the words of the normalised name.
-- **165** — `matches` are companies whose name contains **all** those words
+- **170** — `words` are the words of the normalised name.
+- **171** — `matches` are companies whose name contains **all** those words
   (`words <= ...` means "is a subset of"). `techcare` matches two companies;
   `techcare support` matches one.
-- **166–167** — if a `reference` was given, keep only companies whose
+- **172–173** — if a `reference` was given, keep only companies whose
   `creditor_code` starts it.
-- **168–172** — **the garbled-name fallback.** If nothing matched and there
+- **174–178** — **the garbled-name fallback.** If nothing matched and there
   is a reference, look the other way round: take every company whose
   `creditor_code` starts the reference, and keep it only if the name on the
   statement is at least `NAME_SIMILARITY` like the registered name. Banks
   shorten names (`TECHCRE SUP` for TechCare Support), so an exact word match
   is too strict; the creditor code finds the company and the similarity check
   stops an unrelated name from riding on someone else's code.
-- **173–174** — none left: fail.
-- **175–177** — more than one left: fail as ambiguous, and report how many
+- **179–180** — none left: fail.
+- **181–183** — more than one left: fail as ambiguous, and report how many
   `candidates` there were. That number tells the caller a retry with more
   information is worth trying.
-- **178–180** — exactly one: copy it, add `age_days`, return it.
+- **184–186** — exactly one: copy it, add `age_days`, return it.
 
-### `identify_operator` (lines 183–188)
+### `identify_operator` (lines 189–194)
 
 Returns the director behind a merchant, or an empty string.
 
-- **185** — look up by name.
-- **186–187** — if that failed and there is a reference, retry with it.
-- **188** — return the `director` on success.
+- **191** — look up by name.
+- **192–193** — if that failed and there is a reference, retry with it.
+- **194** — return the `director` on success.
 
-### `mandate_history` (lines 191–195)
+### `mandate_history` (lines 197–201)
 
-- **192** — `previous` debit amounts from this merchant.
-- **193** — `ratio` of this amount to the last one, or `None`.
-- **194–195** — report whether it is the first debit and the ratio.
+- **198** — `previous` debit amounts from this merchant.
+- **199** — `ratio` of this amount to the last one, or `None`.
+- **200–201** — report whether it is the first debit and the ratio.
 
-### Action tools — they change the world (lines 200–252)
+### The person's mailbox (lines 204–262)
+
+The tools never talk to Gmail directly. The server registers a `Mailbox`
+(`api/gmail.py`'s `GmailMailbox`) and the tools call it by mailbox id. With no
+mailbox registered, as in the console and most tests, flagging works exactly as
+before and nothing is moved.
+
+- **206–207 `MailboxError`** — the mailbox refused or could not be reached. Its
+  message is plain words a trace can show.
+- **210–216 `Mailbox`** — the five things a tool may do: move messages to the
+  Bin and back, list a sender's messages, and add or remove a filter.
+  `add_filter` also says whether it made a new filter or found the person's own.
+- **219 `_mailbox`** — the registered mailbox, or `None`.
+- **220 `SINGLE_ADDRESS`** — one exact email address: something before a single
+  `@`, then a domain with a dot.
+- **223–226 `set_mailbox`** — register (or clear) the mailbox.
+- **229–231 `is_single_address`** — true only for one exact address, never a
+  bare domain. The filter refuses anything else.
+- **234–245 `_bin_reported_email`** — move the email that was flagged.
+  - **236–238** — only for a report the scanner tagged with its `mailbox` and
+    `gmail_id`; a shared SMS or a forwarded email has neither.
+  - **239–242** — a refusal is swallowed: the sender stays marked, the email
+    stays where it is, and the warning will not mention the Bin.
+  - **243–245** — remember what moved, under `FLAG_SENDER:<report id>`.
+- **248–262 `_restore`** — undo one `binned` entry: take the messages out of the
+  Bin (254–256), and remove the filter only if Scam Stop created it (257–259),
+  so a filter the person made themselves survives. A failure is noted, not
+  raised (260–261), so the rest of the rollback still runs.
+
+### Action tools — they change the world (lines 267–347)
 
 Every action tool takes the same three arguments (`action`, `incident`,
 `report`) and returns a `ToolResult`.
 
-**`warn_person` (200–202)** — puts the message in the outbox.
+**`warn_person` (267–269)** — puts the message in the outbox.
 
-**`flag_sender` (205–213)** — marks a sender as a scammer.
-- **206** — `target` is the sender to mark.
-- **207–208** — nothing to mark: fail.
-- **209–210** — the target is a shared mail provider: **refuse**, and mark the
+**`flag_sender` (272–305)** — marks a sender as a scammer.
+- **273** — `target` is the sender to mark.
+- **274–275** — nothing to mark: fail.
+- **276–277** — the target is a shared mail provider: **refuse**, and mark the
   result `protected`. The tool enforces this itself, so it holds even if
   whatever proposed the action got it wrong.
-- **211–213** — otherwise add it to `flagged`, warn the person, succeed.
-  `flagged` is read back by `assess`, so the sender's later messages count as
-  high risk. Nothing outside Scam Stop is blocked.
+- **278** — otherwise add it to `flagged`. `flagged` is read back by
+  `assess`, so the sender's later messages count as high risk.
+- **279** — move the email itself to the Bin, when it came from a connected
+  mailbox (see `_bin_reported_email`).
+- **280–283** — warn the person. The sentence about the Bin is added only when
+  the email really moved, so the warning never claims what did not happen.
+- **284–285** — succeed, saying in the detail whether the email was binned.
 
-**`draft_dispute` (216–224)**
-- **217–219** — without a registration number the dispute has nobody to be
+**`filter_sender` (288–305)** — a standing Bin filter for one address. It is
+high impact, so it only ever runs after the caregiver approves it.
+- **291–292** — refuse anything that is not one exact address. A domain
+  filter could bin a real company's mail.
+- **293–294** — refuse when the sender did not write to a connected mailbox.
+- **295–298** — make the Gmail filter, or find the same one the person already
+  has. A refusal fails the action, so the review shows it did not work.
+- **299–300** — remember the filter in `binned` before anything else can fail.
+- **301–305** — move the sender's earlier mail to the Bin. If that fails the
+  filter still stands, so the action succeeds and the detail says what did not
+  move.
+
+**`draft_dispute` (308–316)**
+- **309–311** — without a registration number the dispute has nobody to be
   addressed to: fail.
-- **220–221** — build the dispute text.
-- **222–224** — store the dispute as three things: the `text`, the
+- **312–313** — build the dispute text.
+- **314–316** — store the dispute as three things: the `text`, the
   `dispute_by` date, and the `steps` to lodge it. Return them, and say the
   deadline in the trace. The agent drafts; the person or caregiver lodges.
 
-**`block_operator` (227–233)**
-- **228–230** — without an identified operator there is nothing to block: fail.
-- **231** — add the director to `blocked`.
-- **232–233** — report every company name that director controls.
+**`block_operator` (319–325)**
+- **320–322** — without an identified operator there is nothing to block: fail.
+- **323** — add the director to `blocked`.
+- **324–325** — report every company name that director controls.
 
-**`withdraw` (236–252)** — the rollback.
-- **238** — `undone` collects what was reversed.
-- **239–241** — look only at actions that actually ran (`EXECUTED`).
-- **242–244** — a sender flag is removed from the filter.
-- **245–247** — a dispute is removed.
-- **248–251** — the merchant is added to `trusted` and that is noted.
-- **252** — always succeeds; says "nothing to undo" if that was the case.
+**`withdraw` (328–347)** — the rollback.
+- **330** — `undone` collects what was reversed.
+- **331–333** — look only at actions that actually ran (`EXECUTED`).
+- **334–336** — whatever this action moved to the Bin comes back out, and a
+  filter it made is removed (see `_restore`).
+- **337–339** — a sender flag is removed from the filter.
+- **340–342** — a dispute is removed.
+- **343–346** — the merchant is added to `trusted` and that is noted.
+- **347** — always succeeds; says "nothing to undo" if that was the case.
 
-### The registry of tools (lines 255–263)
+### The registry of tools (lines 350–360)
 
 `ACTION_TOOLS` maps each `ActionType` to the function that carries it out.
 `ADVISE_DECLINE` uses the same function as `WARN_PERSON`: both deliver a
 message to the person, and the message carries the advice.
 The engine looks actions up here. An action with no entry cannot run.
 
-### `correct` (lines 266–271)
+### `correct` (lines 362–367)
 
 Given an action that failed and its result, return a corrected action to try
 next, or `None` to hand over to a human.
 
-- **268** — the sender address from the message's signals.
-- **269–270** — if a `FLAG_SENDER` was refused as `protected`, and there is a
+- **364** — the sender address from the message's signals.
+- **365–366** — if a `FLAG_SENDER` was refused as `protected`, and there is a
   sender address that has not been tried, return the same action with the
   target narrowed to that one address. `model_copy(update=...)` makes a copy
   with one field changed.
-- **271** — any other failure has no known correction.
+- **367** — any other failure has no known correction.
 
 The rules in `logic.py` already choose the address for a shared provider, so
 this path is a second line of defence. It matters when something else
@@ -585,115 +636,130 @@ The engine calls this when a human rejects a review.
 The next doubtful message from that sender is then not raised again. It is
 learning from the human, in memory, not retraining any rule or model.
 
-### `_kind_wording` (lines 140–147)
+### `_bin_filter` (lines 140–155)
 
-- **142–143** — unless `ENABLE_GEMINI=1`, return the standard wording unchanged.
-- **144–145** — otherwise ask Gemini to reword it.
-- **146–147** — if Gemini fails, or its message fails the safety check, use
+Offers a standing Bin filter for the sender, as a follow-up to `FLAG_SENDER`.
+
+- **147–149** — only for an email the scanner tagged with its `mailbox`, whose
+  domain vouched for the From address (`sender_verified`, a DMARC pass), and
+  whose sender is one exact address. A forged From line would otherwise teach
+  the filter to bin the real sender, such as the person's bank.
+- **150–151** — nothing to offer if a filter for this address already exists.
+- **152–155** — a `FILTER_SENDER` proposal with the address, the mailbox and
+  the plain question for the caregiver.
+
+### `_kind_wording` (lines 158–165)
+
+- **160–161** — unless `ENABLE_GEMINI=1`, return the standard wording unchanged.
+- **162–163** — otherwise ask Gemini to reword it.
+- **164–165** — if Gemini fails, or its message fails the safety check, use
   the standard wording.
 
-### `assess` (lines 150–257)
+### `assess` (lines 168–277)
 
 Called once per message. Returns an `Assessment`.
 
-**Gather (151–162)**
-- **151** — the message's signals.
-- **152–153** — feedback from the person takes the withdrawal path.
-- **155** — `is_debit` and `is_mandate`.
-- **156** — `when`: the message's time, or now if it has none.
-- **157** — `verdict` from the gate. `ask_jev` is passed only when
+**Gather (169–180)**
+- **169** — the message's signals.
+- **170–171** — feedback from the person takes the withdrawal path.
+- **173** — `is_debit` and `is_mandate`.
+- **174** — `when`: the message's time, or now if it has none.
+- **175** — `verdict` from the gate. `ask_jev` is passed only when
   `ENABLE_JEV=1`; otherwise the gate runs on rules alone.
-- **158–160** — investigate if it is a debit, a mandate request, or if the
+- **176–178** — investigate if it is a debit, a mandate request, or if the
   gate score reached `GATE_THRESHOLD`.
-- **161–162** — remember this debit's amount for next time, after the
+- **179–180** — remember this debit's amount for next time, after the
   investigation, so the debit is not compared with itself.
 
-**Score (164–187)**
-- **164** — `price_jump` is true if the history finding carried the jump weight.
-- **165** — `trusted`: the person confirmed this merchant, and the price has
+**Score (182–205)**
+- **182** — `price_jump` is true if the history finding carried the jump weight.
+- **183** — `trusted`: the person confirmed this merchant, and the price has
   not jumped. Trust does not cover a jump.
-- **166** — `risk` is 0 for a trusted merchant; otherwise the gate score plus
+- **184** — `risk` is 0 for a trusted merchant; otherwise the gate score plus
   the finding weights, capped at 1.
-- **167–169** — `known`: a human already cleared this sender, and the risk is
+- **185–187** — `known`: a human already cleared this sender, and the risk is
   below `CONTAIN_THRESHOLD`. Then the risk is set to 0. Strong evidence still
   overrides it, because a sender name can be spoofed.
-- **170** — `evidence` is every reason that added risk.
-- **171–172** — `shared_provider` (a shared mail provider such as Gmail) and
+- **188** — `evidence` is every reason that added risk.
+- **189–190** — `shared_provider` (a shared mail provider such as Gmail) and
   `flag_target`: the sender's single address on a shared provider or for SMS
   and WhatsApp, otherwise their domain.
-- **173–176** — **memory of scammers.** If this sender was already marked as a
+- **191–194** — **memory of scammers.** If this sender was already marked as a
   scammer (and the merchant is not trusted), the risk is raised to at least
   `CONTAIN_THRESHOLD` and the reason is recorded. A follow-up such as "did you
   get my message?" looks innocent on its own; from a known scammer it is not.
-- **177** — `established`: the company was identified and is older than
+- **195** — `established`: the company was identified and is older than
   `YOUNG_DAYS`.
-- **178–181** — **the mandate rule.** A request to set up a debit is advised
+- **196–199** — **the mandate rule.** A request to set up a debit is advised
   against unless the merchant is trusted, or is an established company with
   clean wording. The reason is the DebiCheck rule: once a mandate is approved,
   its debits cannot be disputed. So the agent's most useful moment is before
   approval, and the default there is "do not approve what we cannot verify".
   The risk is raised to at least the threshold and the reason is recorded.
-- **182–184** — `threat`: the gate's answer, except that a message with clean
+- **200–202** — `threat`: the gate's answer, except that a message with clean
   wording but risky findings is not called benign.
-- **185–186** — `labels`: threat, merchant and registration number.
-- **187** — `stay`: the state to ask for when nothing should change.
+- **203–204** — `labels`: threat, merchant and registration number.
+- **205** — `stay`: the state to ask for when nothing should change.
 
-**Benign (189–193)** — below the threshold: `LOW`, no action.
+**Benign (207–211)** — below the threshold: `LOW`, no action.
 
-**Suspicious (195–204)**
-- **195** — `confidence` starts at 0.55 and rises 0.1 per piece of evidence,
+**Suspicious (213–223)**
+- **213** — `confidence` starts at 0.55 and rises 0.1 per piece of evidence,
   capped at 0.95. One weak signal gives 0.65, below 0.75, so a human sees it.
-- **196** — `rationale` lists the evidence, then the gate's notes.
-- **197–198** — `conflict`: suspicious wording, but a tool found the sender
+- **214** — `rationale` lists the evidence, then the gate's notes.
+- **215–216** — `conflict`: suspicious wording, but a tool found the sender
   established. That contradiction goes to a human.
-- **199–200** — `disputed`: has a dispute for this incident actually been lodged?
-- **201** — `who`: a name for the messages. The merchant if there is one;
+- **217–218** — `disputed`: has a dispute for this incident actually been lodged?
+- **219** — `who`: a name for the messages. The merchant if there is one;
   otherwise the sender itself for a shared mail provider or an SMS (which has
   no domain), and the sender's domain for other email. Before this, every SMS
   warning said "an unknown sender".
-- **202** — defaults: `MEDIUM`, ask for `CONTAINED`.
-- **204** — `amount_text`: the amount in words for messages, or "an amount".
+- **220** — defaults: `MEDIUM`, ask for `CONTAINED`.
+- **221** — no follow-up action unless a branch below sets one.
+- **223** — `amount_text`: the amount in words for messages, or "an amount".
 
-**The response ladder (205–250)**
-- **205–211** — a mandate request: `ADVISE_DECLINE`. The message tells the
+**The response ladder (224–270)**
+- **224–230** — a mandate request: `ADVISE_DECLINE`. The message tells the
   person who is asking, for how much, and that it is hard to reverse once
   approved. `HIGH` for R300 or more. Nothing is contained, because the choice
   is the person's; the state is `INVESTIGATING`. This action is on the safe
   list, so it is delivered at once without waiting for anyone.
-- **212–217** — a debit arrives after a dispute was lodged. The dispute did
+- **231–236** — a debit arrives after a dispute was lodged. The dispute did
   not stop the operator, so escalate to `BLOCK_OPERATOR`, severity `HIGH`. The
   agent learns its earlier action failed from the next message, not from the
   tool. `ask` is the plain question shown to whoever approves.
-- **218–224** — a suspicious debit from an identified company:
-  `DRAFT_DISPUTE`, `HIGH` if the amount is R300 or more. Line 223 sets
+- **237–243** — a suspicious debit from an identified company:
+  `DRAFT_DISPUTE`, `HIGH` if the amount is R300 or more. Line 242 sets
   `dispute_by`: the message date plus `DISPUTE_WINDOW_DAYS`.
-- **225–230** — a suspicious debit from an unidentified merchant: only warn
+- **244–249** — a suspicious debit from an unidentified merchant: only warn
   the person, and ask for a human.
-- **231–236** — an unrequested loan, credit or insurance offer
+- **250–255** — an unrequested loan, credit or insurance offer
   (`SALES_OFFER`): only warn, `LOW`, whatever the score. The sender may be a
   real bank or insurer, so it is never blocked, even when a second rule pushes
   the risk past `CONTAIN_THRESHOLD`. The warning explains that replying YES
   agrees to a sales call and that these often end in a debit order. This
   branch comes before the containment branch on purpose.
-- **237–245** — a suspicious message at or above `CONTAIN_THRESHOLD`:
+- **256–265** — a suspicious message at or above `CONTAIN_THRESHOLD`:
   `FLAG_SENDER`, `HIGH` for tech-support or identity threats. The target is
   `flag_target`. The warning says the sender has been **marked as a scammer**,
-  not blocked, and ends with `BLOCK_HOW` for the message's channel (line 244).
+  not blocked, and ends with `BLOCK_HOW` for the message's channel (line 263).
   An earlier version said "We have blocked the sender", which was not true
-  for WhatsApp, SMS or Gmail.
-- **246–250** — a mildly suspicious message: `WARN_PERSON`, `LOW`.
+  for WhatsApp, SMS or Gmail. Line 265 adds a Bin filter as the follow-up
+  when `_bin_filter` allows one; the engine runs it only after the flag ran,
+  and the guardrails hold it for the caregiver.
+- **266–270** — a mildly suspicious message: `WARN_PERSON`, `LOW`.
 
 Every action on the ladder carries `ask`: a plain question for whoever has
 to approve it, the caregiver or, with no guardian, the person. It was added
 after the first real sync held a warning whose only explanation was
 "Confidence below 0.75". The question never goes to a model.
 
-**Finish (252–257)**
-- **252–253** — if the action carries a message for the person, add the
+**Finish (272–277)**
+- **272–273** — if the action carries a message for the person, add the
   threat's hint from `THREAT_HINTS`, then pass it through `_kind_wording`.
-- **254–255** — a resolved incident that receives new suspicious evidence is
+- **274–275** — a resolved incident that receives new suspicious evidence is
   asked to reopen.
-- **256–257** — return the assessment.
+- **276–277** — return the assessment, with the follow-up if there is one.
 
 ### What this file does not do
 

@@ -61,6 +61,7 @@ def email_to_row(raw: str) -> dict[str, Any]:
             "sender_name": sender_name,
             "reply_to": parseaddr(str(message.get("Reply-To", "")))[1].lower(),
             "auth_fail": bool(re.search(r"\b(spf|dkim|dmarc)=fail", authentication)),
+            "sender_verified": bool(re.search(r"\bdmarc=pass", authentication)),  # the From address really belongs to the sender
             "links": links,
         },
     }

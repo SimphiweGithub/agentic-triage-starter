@@ -12,23 +12,25 @@ from datetime import datetime
 
 from fastapi import HTTPException
 
-from api.gmail import google_token, message_ids, raw_email
+from api.gmail import BIN_SCOPES, GmailMailbox, google_grant, message_ids, raw_email
 from api.pool import all_runtimes, runtime_for
 from api.routes import Withheld, take_in_email
 from api.store import Store, get_store
 from domain.enums import IncidentState
 from core.runtime import TriageRuntime
 from domain.schemas import DecisionRecord
+from domain.tools import set_mailbox
 
 BACKFILL_DAYS = 14
 OVERLAP_SECONDS = 120  # look slightly before the last check so nothing slips between two scans
 RESOLVED = (IncidentState.RESOLVED, IncidentState.CLOSED)
 
 
-def handle_mail(mailbox: dict, raw: str) -> str:
-    """Take one email in for the mailbox's person and apply the retention rules. Returns the verdict: safe, flagged or withheld."""
+def handle_mail(mailbox: dict, raw: str, message_id: str | None = None) -> str:
+    """Take one email in for the mailbox's person and apply the retention rules. Returns the verdict: safe, flagged or withheld.
+    A Gmail message id lets a flagged email be moved to the Bin."""
     rt = runtime_for(mailbox["person_id"])
-    result = take_in_email(raw, rt)
+    result = take_in_email(raw, rt, {"mailbox": mailbox["id"], "gmail_id": message_id} if message_id else None)
     if isinstance(result, Withheld):
         return "withheld"  # a one-time code: nothing was stored
     if result.labels.get("threat") == "BENIGN":
@@ -84,7 +86,7 @@ def blank_resolved() -> int:
     return blanked
 
 
-def scan_gmail(store: Store, mailbox: dict, handle: Callable[[dict, str], str] = handle_mail) -> int:
+def scan_gmail(store: Store, mailbox: dict, handle: Callable[[dict, str, str], str] = handle_mail) -> int:
     """One pass over one Gmail mailbox. Returns how many new emails were read."""
     if mailbox["last_checked"]:
         since = int(datetime.fromisoformat(mailbox["last_checked"]).timestamp()) - OVERLAP_SECONDS
@@ -93,7 +95,8 @@ def scan_gmail(store: Store, mailbox: dict, handle: Callable[[dict, str], str] =
         query = f"in:inbox newer_than:{BACKFILL_DAYS}d"  # first connection: look back a fortnight
     read = 0
     try:
-        token = google_token(mailbox["owner_user_id"])
+        token, scopes = google_grant(mailbox["owner_user_id"])
+        store.set_can_bin(mailbox["id"], BIN_SCOPES <= scopes)
         for message_id in message_ids(token, query):
             current = store.mailbox(mailbox["id"])
             if current is None or current["status"] == "disconnected" or current["owner_user_id"] != mailbox["owner_user_id"]:
@@ -104,7 +107,7 @@ def scan_gmail(store: Store, mailbox: dict, handle: Callable[[dict, str], str] =
             current = store.mailbox(mailbox["id"])
             if current is None or current["status"] == "disconnected" or current["owner_user_id"] != mailbox["owner_user_id"]:
                 return read
-            store.record_scanned(mailbox["id"], message_id, handle(mailbox, raw))
+            store.record_scanned(mailbox["id"], message_id, handle(mailbox, raw, message_id))
             read += 1
         store.mark_checked(mailbox["id"])
     except HTTPException as error:
@@ -114,7 +117,7 @@ def scan_gmail(store: Store, mailbox: dict, handle: Callable[[dict, str], str] =
     return read
 
 
-def scan_once(store: Store, handle: Callable[[dict, str], str] = handle_mail) -> int:
+def scan_once(store: Store, handle: Callable[[dict, str, str], str] = handle_mail) -> int:
     """One pass over every Gmail mailbox that is still wanted, then blank what is resolved."""
     read = sum(scan_gmail(store, mailbox, handle) for mailbox in store.mailboxes()
                if mailbox["kind"] == "gmail" and mailbox["status"] != "disconnected")
@@ -148,6 +151,7 @@ def start_scanning(store: Store | None = None) -> threading.Thread | None:
     if not os.getenv("CLERK_SECRET_KEY"):
         return None
     store = store or get_store()
+    set_mailbox(GmailMailbox(store))  # flagged mail can now be moved to the Bin
     seconds = float(os.getenv("SCAN_SECONDS", "60"))
 
     def loop() -> None:

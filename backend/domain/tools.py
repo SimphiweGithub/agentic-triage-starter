@@ -1,9 +1,12 @@
 """The tools the agent calls, and the outside world they read or change.
 
-Domain age can be looked up for real (see `domain_age`). The bank, the company
-registry and the mail filter are simulated: they keep the shape a real
-integration would have (typed input, a ToolResult that says whether it
-worked) but act on the in-memory `WORLD` and fixture data below.
+Domain age can be looked up for real (see `domain_age`). The person's own
+mailbox is changed for real when the server has registered one (see
+`set_mailbox`): a flagged email goes to the Bin, and an approved filter sends a
+sender's later mail there too. The bank and the company registry are
+simulated: they keep the shape a real integration would have (typed input, a
+ToolResult that says whether it worked) but act on the in-memory `WORLD` and
+fixture data below.
 """
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -12,7 +15,8 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 import json
 import os
-from typing import Callable
+import re
+from typing import Callable, Protocol
 import urllib.request
 
 from domain.enums import ActionOutcome, ActionType
@@ -30,6 +34,7 @@ class World:
     trusted: set[str] = field(default_factory=set)             # merchants the person confirmed as their own
     known_senders: set[str] = field(default_factory=set)       # senders a human said were fine when a doubtful warning was held
     debits: dict[str, list[float]] = field(default_factory=dict)  # merchant -> amounts seen so far
+    binned: dict[str, dict] = field(default_factory=dict)      # "<action>:<report id>" -> what was moved to the Bin, so it can be undone
     guardian: bool = field(default_factory=lambda: os.getenv("KINGUARD_GUARDIAN", "1") != "0")  # is a caregiver enrolled?
 
 
@@ -78,7 +83,7 @@ def world_state() -> dict:
     """The world as plain JSON values, for saving to disk. Sets become sorted lists."""
     return {"outbox": WORLD.outbox, "flagged": sorted(WORLD.flagged), "disputes": WORLD.disputes,
             "blocked": sorted(WORLD.blocked), "trusted": sorted(WORLD.trusted), "debits": WORLD.debits,
-            "known_senders": sorted(WORLD.known_senders),
+            "known_senders": sorted(WORLD.known_senders), "binned": WORLD.binned,
             "guardian": WORLD.guardian}
 
 
@@ -88,6 +93,7 @@ def restore_world(saved: dict) -> None:
     WORLD.outbox, WORLD.disputes, WORLD.debits = saved["outbox"], saved["disputes"], saved["debits"]
     WORLD.flagged, WORLD.blocked, WORLD.trusted = set(saved["flagged"]), set(saved["blocked"]), set(saved["trusted"])
     WORLD.known_senders = set(saved.get("known_senders", []))  # older saved files do not have it
+    WORLD.binned = saved.get("binned", {})
     WORLD.guardian = saved["guardian"]
 
 
@@ -195,6 +201,67 @@ def mandate_history(merchant: str, amount: float) -> ToolResult:
     return ToolResult(ok=True, detail=detail, data={"first_time": not previous, "ratio": ratio})
 
 
+# ---- the person's mailbox ----
+
+class MailboxError(Exception):
+    """The mailbox refused or could not be reached. The message says why, in plain words."""
+
+
+class Mailbox(Protocol):
+    """What the tools may do to a connected mailbox. The server registers the real one; tests register a stand-in."""
+    def trash(self, mailbox_id: str, message_ids: list[str]) -> list[str]: ...   # returns the ids actually moved
+    def untrash(self, mailbox_id: str, message_ids: list[str]) -> None: ...
+    def find_from(self, mailbox_id: str, sender: str) -> list[str]: ...
+    def add_filter(self, mailbox_id: str, sender: str) -> tuple[str, bool]: ...  # (filter id, whether it was created now)
+    def remove_filter(self, mailbox_id: str, filter_id: str) -> None: ...
+
+
+_mailbox: Mailbox | None = None
+SINGLE_ADDRESS = re.compile(r"[^@\s\"(),:;<>\[\]]+@[a-z0-9.-]+\.[a-z]{2,}")
+
+
+def set_mailbox(mailbox: Mailbox | None) -> None:
+    """Register how to reach connected mailboxes. Without one, flagging still works and nothing is moved."""
+    global _mailbox
+    _mailbox = mailbox
+
+
+def is_single_address(text: str) -> bool:
+    """One exact email address, not a domain: the only thing a standing filter may match."""
+    return bool(SINGLE_ADDRESS.fullmatch(text or ""))
+
+
+def _bin_reported_email(report: RawInputReport, target: str) -> bool:
+    """Move the email itself to the Bin when it came from a connected mailbox. Returns whether it moved."""
+    mailbox, message = report.metadata.get("mailbox"), report.metadata.get("gmail_id")
+    if _mailbox is None or not mailbox or not message:
+        return False
+    try:
+        moved = _mailbox.trash(mailbox, [message])
+    except MailboxError:
+        return False  # the sender is still marked; the email simply stays where it is
+    if moved:
+        WORLD.binned[f"{ActionType.FLAG_SENDER.value}:{report.report_id}"] = {"mailbox": mailbox, "target": target, "messages": moved}
+    return bool(moved)
+
+
+def _restore(entry: dict) -> list[str]:
+    """Undo what was moved to the Bin, and remove a filter Scam Stop created. Returns what was undone."""
+    if _mailbox is None:
+        return ["the mailbox could not be reached to undo the Bin"]
+    undone = []
+    try:
+        if entry.get("messages"):
+            _mailbox.untrash(entry["mailbox"], entry["messages"])
+            undone.append(f"{len(entry['messages'])} email(s) taken out of the Bin")
+        if entry.get("filter_id") and entry.get("created"):
+            _mailbox.remove_filter(entry["mailbox"], entry["filter_id"])
+            undone.append(f"filter for {entry['target']} removed")
+    except MailboxError as error:
+        undone.append(f"the mailbox could not be fully restored ({error})")
+    return undone
+
+
 # ---- action tools: change the world ----
 
 def warn_person(action: ActionProposal, incident: IncidentRecord, report: RawInputReport) -> ToolResult:
@@ -209,8 +276,33 @@ def flag_sender(action: ActionProposal, incident: IncidentRecord, report: RawInp
     if target in PROTECTED_DOMAINS:
         return ToolResult(ok=False, detail=f"{target} is a shared mail provider; flagging the whole domain is refused", data={"protected": True})
     WORLD.flagged.add(target)
-    WORLD.outbox.append({"incident_id": incident.incident_id, "message": action.details.get("message", "")})
-    return ToolResult(ok=True, detail=f"{target} marked as a scammer; later messages from them are treated as high risk; person warned")
+    binned = _bin_reported_email(report, target)
+    message = action.details.get("message", "")
+    if binned:  # only said when it is true
+        message += " We have moved this email to your Bin. You can still find it there for 30 days."
+    WORLD.outbox.append({"incident_id": incident.incident_id, "message": message})
+    return ToolResult(ok=True, detail=f"{target} marked as a scammer; later messages from them are treated as high risk; "
+                                      + ("email moved to the Bin; " if binned else "") + "person warned")
+
+
+def filter_sender(action: ActionProposal, incident: IncidentRecord, report: RawInputReport) -> ToolResult:
+    """Send every later email from one address straight to the Bin, and move the earlier ones there too."""
+    target, mailbox = str(action.details.get("target") or "").lower(), str(action.details.get("mailbox") or "")
+    if not is_single_address(target):
+        return ToolResult(ok=False, detail="only a single email address can be sent to the Bin, never a whole domain")
+    if not mailbox or _mailbox is None:
+        return ToolResult(ok=False, detail="this sender did not write to a connected mailbox, so there is nothing to filter")
+    try:
+        filter_id, created = _mailbox.add_filter(mailbox, target)
+    except MailboxError as error:
+        return ToolResult(ok=False, detail=f"the filter could not be made: {error}")
+    entry = {"mailbox": mailbox, "target": target, "filter_id": filter_id, "created": created, "messages": []}
+    WORLD.binned[f"{ActionType.FILTER_SENDER.value}:{report.report_id}"] = entry
+    try:
+        entry["messages"] = _mailbox.trash(mailbox, _mailbox.find_from(mailbox, target))
+    except MailboxError as error:
+        return ToolResult(ok=True, detail=f"later mail from {target} now goes to the Bin; earlier emails could not be moved ({error})")
+    return ToolResult(ok=True, detail=f"later mail from {target} now goes to the Bin; {len(entry['messages'])} earlier email(s) moved to the Bin")
 
 
 def draft_dispute(action: ActionProposal, incident: IncidentRecord, report: RawInputReport) -> ToolResult:
@@ -239,6 +331,9 @@ def withdraw(action: ActionProposal, incident: IncidentRecord, report: RawInputR
     for record in incident.actions:
         if record.outcome is not ActionOutcome.EXECUTED:
             continue
+        entry = WORLD.binned.pop(f"{record.action.type.value}:{record.report_id}", None)
+        if entry:
+            undone += _restore(entry)
         if record.action.type is ActionType.FLAG_SENDER:
             WORLD.flagged.discard(record.action.details.get("target"))
             undone.append("sender flag removed")
@@ -257,6 +352,7 @@ ACTION_TOOLS: dict[ActionType, ActionTool] = {
     ActionType.WARN_PERSON: warn_person,
     ActionType.ADVISE_DECLINE: warn_person,  # same delivery; the message carries the advice
     ActionType.FLAG_SENDER: flag_sender,
+    ActionType.FILTER_SENDER: filter_sender,
     ActionType.DRAFT_DISPUTE: draft_dispute,
     ActionType.BLOCK_OPERATOR: block_operator,
     ActionType.WITHDRAW: withdraw,

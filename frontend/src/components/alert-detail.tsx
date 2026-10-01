@@ -1,4 +1,4 @@
-import { Check } from 'lucide-react'
+import { Check, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -7,6 +7,7 @@ import {
   PERSON,
   actionLabel,
   alertGroup,
+  binEffects,
   findings,
   formatTime,
   incidentReports,
@@ -49,6 +50,7 @@ function Body({ incident, state, briefs, onDecided }: { incident: Incident; stat
   const noticed = [...new Set(reports.flatMap((report) => findings(decisions.get(report.report_id)?.trace ?? [])))]
   const done = incident.actions.filter((item) => item.outcome === 'EXECUTED')
   const failed = incident.actions.filter((item) => item.outcome === 'FAILED')
+  const binned = binEffects(incident)
 
   return (
     <>
@@ -93,6 +95,22 @@ function Body({ incident, state, briefs, onDecided }: { incident: Incident; stat
                 </li>
               ))}
             </ul>
+          )}
+          {binned.length > 0 && (
+            <div className="grid gap-1.5 rounded-lg bg-info-soft px-3 py-2">
+              <ul className="space-y-1">
+                {binned.map((item) => (
+                  <li key={item} className="flex items-start gap-2 font-bold">
+                    <Trash2 className="mt-1 size-4 shrink-0 text-info" aria-hidden="true" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-sm text-muted-foreground">
+                Nothing is deleted: Gmail keeps binned email for 30 days. If this was a mistake, {PERSON.name} taps “This is mine” on the warning, and
+                Scam Stop puts the email back and removes the filter.
+              </p>
+            </div>
           )}
           {failed.map((item, index) => (
             <p key={index} className="rounded-lg bg-destructive/10 px-3 py-2 text-sm font-bold text-destructive">

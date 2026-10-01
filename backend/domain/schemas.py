@@ -44,6 +44,8 @@ class Assessment(BaseModel):
     review_reason: str | None = None
     # Seconds a human must wait before approving the review this assessment opens. 0 means no wait.
     review_delay_seconds: int = 0
+    # A second action, tried only after the first one ran. It passes the same guardrails, so a high-impact one waits for a human.
+    follow_up_action: ActionProposal | None = None
     labels: dict[str, str] = Field(default_factory=dict)
 
 

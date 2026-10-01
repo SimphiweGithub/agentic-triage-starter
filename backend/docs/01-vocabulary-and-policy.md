@@ -42,7 +42,7 @@ relationship for the protected person.
 `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`. The order of the lines matters: the
 harness uses it to measure how far off a severity is.
 
-### `ActionType` (lines 22–29)
+### `ActionType` (lines 22–30)
 
 What the agent can do.
 
@@ -51,23 +51,24 @@ What the agent can do.
 | `RECORD_ONLY` | Nothing; placeholder used by the generic tests |
 | `WARN_PERSON` | Show the person a plain warning |
 | `ADVISE_DECLINE` | Advise the person not to approve a new debit mandate |
-| `FLAG_SENDER` | Block a sender in the mail filter and warn the person |
+| `FLAG_SENDER` | Mark a sender as a scammer, move the email to the person's Bin when it came from their connected Gmail, and warn the person |
+| `FILTER_SENDER` | Keep a Gmail filter that sends one address's later mail to the Bin, and bin their earlier mail |
 | `DRAFT_DISPUTE` | Write a dispute against a debit |
 | `BLOCK_OPERATOR` | Ask the bank to refuse every mandate from an operator |
 | `WITHDRAW` | Undo the agent's earlier actions and trust the merchant |
 
-### `ServiceDomain` (lines 32–36)
+### `ServiceDomain` (lines 33–37)
 
 Who carries out an action: `PERSON` (the person's own app), `MAIL_FILTER`,
 `BANK`, or `UNSPECIFIED`.
 
-### `Relationship` (lines 39–42)
+### `Relationship` (lines 40–43)
 
 How a new message relates to what is already known: `NEW` (starts an
 incident), `RELATED` (more evidence about an existing one), `DUPLICATE` (the
 same message again).
 
-### `ActionOutcome` (lines 45–53)
+### `ActionOutcome` (lines 46–54)
 
 What the engine did with a proposed action.
 
@@ -81,13 +82,13 @@ What the engine did with a proposed action.
 | `SUPPRESSED_DUPLICATE` | Not run because the message was a duplicate |
 | `SUPPRESSED_REPEAT` | Not run because the same action was already taken |
 
-### `ThreatDomain` (lines 56–66)
+### `ThreatDomain` (lines 57–67)
 
 The kind of threat: `BENIGN`, `GREY_MARKET_SUBSCRIPTION`, `IDENTITY_FARMING`,
 `TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `IMPERSONATION`, `ADVANCE_FEE`,
 `JOB_SCAM`, `SALES_OFFER`, `UNKNOWN`.
 
-`SALES_OFFER` (line 65) is the one that is not a scam: an unrequested loan,
+`SALES_OFFER` (line 66) is the one that is not a scam: an unrequested loan,
 credit or insurance offer, where replying YES leads to a policy or loan with a
 debit order. It is warned about, never blocked.
 
@@ -131,7 +132,7 @@ object"; without it, all objects would share one dictionary.
 - `outcome` — an `ActionOutcome`.
 - `detail` — what the tool or the guardrail said.
 
-### `Assessment` (lines 37–47) — the domain's judgement of one message
+### `Assessment` (lines 37–49) — the domain's judgement of one message
 
 - `severity`, `confidence` — `Field(ge=0, le=1)` forces confidence between 0 and 1.
 - `requested_state` — the state the domain asks for. The state machine decides
@@ -143,8 +144,11 @@ object"; without it, all objects would share one dictionary.
 - `review_delay_seconds` — how long a human must wait before approving the
   review this assessment opens. 0 means no wait. Used for the cooling-off.
 - `labels` — extra tags such as the threat type and merchant name.
+- `follow_up_action` (lines 47–48) — a second action, tried only after the
+  first one ran. It passes the same guardrails, so a high-impact one waits for
+  a human. Used for the Bin filter after a sender is flagged.
 
-### `IncidentRecord` (lines 50–61) — the evolving state of one incident
+### `IncidentRecord` (lines 52–63) — the evolving state of one incident
 
 - `incident_id`, `status`, `severity`, `confidence` — current assessment.
 - `report_ids` — every message linked to this incident, in order.
@@ -155,7 +159,7 @@ object"; without it, all objects would share one dictionary.
 - `actions` — the list of `ActionRecord`s: the action history.
 - `labels` — accumulated tags from the assessments.
 
-### `DecisionRecord` (lines 64–80) — the engine's output for one message
+### `DecisionRecord` (lines 66–82) — the engine's output for one message
 
 - `report_id`, `incident_id`, `relationship` — what the message was linked to.
 - `status`, `severity`, `confidence` — the incident's state after this message.
@@ -168,7 +172,7 @@ object"; without it, all objects would share one dictionary.
 - `labels` — a copy of the incident's labels at that moment.
 - `trace` — the step-by-step reasoning, one sentence per step.
 
-### `ReviewItem` (lines 83–92) — one item in the caregiver's queue
+### `ReviewItem` (lines 85–94) — one item in the caregiver's queue
 
 - `review_id`, `report_id`, `incident_id` — links.
 - `reason` — why a human is needed.
@@ -212,13 +216,15 @@ of states it may move to. Anything not listed is illegal and is diverted to
 - **Line 16** `FORBIDDEN_ACTIONS` — empty. No action type moves money, so there
   is nothing to forbid yet. Anything added here can never run, even with
   approval.
-- **Line 18** `HIGH_IMPACT_ACTIONS` — `DRAFT_DISPUTE` and `BLOCK_OPERATOR`. They
-  affect the person's bank relationship, so the caregiver approves every one.
+- **Line 18** `HIGH_IMPACT_ACTIONS` — `DRAFT_DISPUTE`, `BLOCK_OPERATOR` and
+  `FILTER_SENDER`. The first two affect the person's bank relationship; the
+  third sets a standing rule on their mailbox. The caregiver approves every one.
 - **Line 20** `SAFE_ACTIONS` — the allowlist of actions that may run
   automatically. An action missing from this set is held, so forgetting to
   classify a new action makes the system safer, not riskier.
 - **Lines 21–26** `ALLOWED_SERVICE_ACTIONS` — which service may do which action.
-  A dispute sent to the mail filter would be rejected.
+  A dispute sent to the mail filter would be rejected. The mail filter may
+  flag a sender or filter one.
 
 ### Merge guard (line 31)
 
@@ -235,34 +241,35 @@ hold stays in place.
 
 - **Line 38** `REPEATABLE_ACTIONS` — empty. An action already taken for an
   incident is not taken again.
-- **Line 40** `ACTION_IDENTITY` — for `FLAG_SENDER`, the `target` is part of
-  what the action is. Flagging a second address is a new action, not a repeat.
+- **Line 40** `ACTION_IDENTITY` — for `FLAG_SENDER` and `FILTER_SENDER`, the
+  `target` is part of what the action is. Flagging or filtering a second address
+  is a new action, not a repeat.
 
-### Correction loop (lines 43–52)
+### Correction loop (lines 43–53)
 
 - **Line 43** `MAX_CORRECTIONS = 2` — after a tool fails, the agent may try two
   corrected actions, then it must ask a human.
-- **Lines 45–49** `STATE_AFTER_APPROVED` — the state an incident moves to when a
-  human-approved action succeeds. A dispute or a block leaves it `CONTAINED`; a
-  withdrawal leaves it `RESOLVED`.
-- **Line 52** `SUPERSEDING_ACTIONS` — when a `WITHDRAW` runs, any review still
+- **Lines 45–50** `STATE_AFTER_APPROVED` — the state an incident moves to when a
+  human-approved action succeeds. A dispute, a block or a Bin filter leaves it
+  `CONTAINED`; a withdrawal leaves it `RESOLVED`.
+- **Line 53** `SUPERSEDING_ACTIONS` — when a `WITHDRAW` runs, any review still
   waiting on that incident is closed, because there is nothing left to approve.
 
-### Thresholds (lines 55–69)
+### Thresholds (lines 56–70)
 
-- **Line 55** `GATE_THRESHOLD = 0.3` — below this risk, a message is benign.
-- **Line 57** `MODEL_YES = 0.7` — the decision model's probability must reach
+- **Line 56** `GATE_THRESHOLD = 0.3` — below this risk, a message is benign.
+- **Line 58** `MODEL_YES = 0.7` — the decision model's probability must reach
   this for its answer to count as a yes.
-- **Line 59** `MODEL_THREAT_CONFIDENCE = 0.6` — the model's threat type is used
+- **Line 60** `MODEL_THREAT_CONFIDENCE = 0.6` — the model's threat type is used
   only at or above this confidence.
-- **Line 61** `CONTAIN_THRESHOLD = 0.6` — at or above this, the sender is
+- **Line 62** `CONTAIN_THRESHOLD = 0.6` — at or above this, the sender is
   blocked instead of only warning the person.
-- **Line 63** `HIGH_AMOUNT = 300.0` — a suspicious debit of R300 or more is `HIGH`.
-- **Line 65** `YOUNG_DAYS = 90` — a domain or company registered less than 90
+- **Line 64** `HIGH_AMOUNT = 300.0` — a suspicious debit of R300 or more is `HIGH`.
+- **Line 66** `YOUNG_DAYS = 90` — a domain or company registered less than 90
   days before the message counts as newly created.
-- **Line 67** `JUMP_RATIO = 2.0` — a debit at least twice the previous one from
+- **Line 68** `JUMP_RATIO = 2.0` — a debit at least twice the previous one from
   the same merchant is a price jump.
-- **Line 69** `NAME_SIMILARITY = 0.6` — how alike a shortened merchant name
+- **Line 70** `NAME_SIMILARITY = 0.6` — how alike a shortened merchant name
   must be to a registered name to count as the same company.
 
 Which of these are measured:
@@ -277,17 +284,17 @@ Which of these are measured:
   `NAME_SIMILARITY` was set from nine hand-made examples, where right matches
   scored 0.67 or more and wrong ones 0.56 or less. Say so if asked.
 
-### Dispute window and cooling-off (lines 72–74)
+### Dispute window and cooling-off (lines 73–75)
 
-- **Line 72** `DISPUTE_WINDOW_DAYS = 60` — an unauthorised debit order can be
+- **Line 73** `DISPUTE_WINDOW_DAYS = 60` — an unauthorised debit order can be
   disputed with the bank for 60 days after it runs. This is the industry rule
   in South Africa from 13 April 2026 (it was 40 days before). Every dispute
   the agent drafts carries this deadline.
-- **Line 74** `COOLING_OFF_SECONDS` — 24 hours. With no guardian enrolled, a
+- **Line 75** `COOLING_OFF_SECONDS` — 24 hours. With no guardian enrolled, a
   person who confirms a high-risk sender as legitimate must wait this long
   before it takes effect. The length is a judgement call.
 
-### Protected list (line 78)
+### Protected list (line 79)
 
 `PROTECTED_DOMAINS` — shared mail providers. Blocking `gmail.com` would block
 every legitimate Gmail sender, so the mail filter tool refuses it, and a flag

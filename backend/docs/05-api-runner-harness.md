@@ -6,12 +6,12 @@ The ways into the engine, the way to score it, and the optional model code.
 
 ## `main.py`
 
-- **Lines 1–14** — imports, including the routers from `api/routes.py` and
+- **Lines 1–16** — imports, including the routers from `api/routes.py` and
   `api/people.py`, the background scanners from `api/scanner.py`, and the store.
-- **Line 16** — `ROOT` is the folder this file is in.
-- **Lines 17–18** — `app` is the web application, with a title and description
+- **Line 18** — `ROOT` is the folder this file is in.
+- **Lines 19–20** — `app` is the web application, with a title and description
   that appear in the generated documentation at `/docs`.
-- **Lines 22–24** — cross-origin access. `CORS_ORIGINS` is read from the
+- **Lines 24–26** — cross-origin access. `CORS_ORIGINS` is read from the
   environment and split on commas into `origins`. If the list is empty, which
   is the default, no cross-origin middleware is added and a page served from
   anywhere else cannot call the API. If addresses are listed, only those may
@@ -19,23 +19,23 @@ The ways into the engine, the way to score it, and the optional model code.
   `Authorization` headers. `Authorization` carries the Clerk session token
   that every route except `/health`, the privacy patterns and the invite
   preview needs. A paired phone sends `X-Device-Key` instead.
-- **Lines 26–31** — health, the privacy patterns and the people routes are served under `/api`.
+- **Lines 28–35** — health, the privacy patterns and the people routes are served under `/api`.
   Person and caregiver routes are served under `/api/people/{person_id}`;
   development mode also exposes unscoped console routes under `/api`.
-- **Line 33** — open the store (`api/store.py`).
-- **Lines 34–36** — if the server has its own IMAP mailbox, list it under the
+- **Line 37** — open the store (`api/store.py`).
+- **Lines 38–40** — if the server has its own IMAP mailbox, list it under the
   first protected person only. A first person added later gets it in `api/people.py`.
-- **Line 37** — start the live mailbox thread. It does nothing unless
+- **Line 41** — start the live mailbox thread. It does nothing unless
   `IMAP_HOST` is set. Each email goes through `forwarded_handler`, so it is
   kept under the same retention rules as Gmail, and each check's result is
   written to the mailbox's status by `note_forwarded`.
-- **Line 38** — start the Gmail scanner. It does nothing unless
+- **Line 42** — start the Gmail scanner. It does nothing unless
   `CLERK_SECRET_KEY` is set.
-- **Line 39** — the `static` folder is served under `/static`.
-- **Lines 42–45** — `/console` returns the plain developer console for
+- **Line 43** — the `static` folder is served under `/static`.
+- **Lines 46–49** — `/console` returns the plain developer console for
   watching the engine. It cannot sign in, so it only works with
   `KINGUARD_DEV_OPEN=1` (see `api/auth.py`).
-- **Lines 50–56** — the Scam Stop dashboard. If `frontend/dist` has been built,
+- **Lines 54–60** — the Scam Stop dashboard. If `frontend/dist` has been built,
   it is mounted at `/`, so the dashboard and the API share one origin and need
   no CORS. It is mounted last, so every `/api` route above is matched first.
   Without a build, `/` redirects to the console.
@@ -46,24 +46,24 @@ The ways into the engine, the way to score it, and the optional model code.
 
 The contract for the front end is in `API.md`. This section explains the code.
 
-**Lines 20–22** — three routers, by who may call them:
-- `router` (line 20) needs a caregiver linked to the person in the path.
-- `person_router` (line 21) accepts that caregiver or the protected person:
+**Lines 21–23** — three routers, by who may call them:
+- `router` (line 21) needs a caregiver linked to the person in the path.
+- `person_router` (line 22) accepts that caregiver or the protected person:
   outbox, feedback, reviews addressed to the person, the person's own state,
   and the phone's inbox sync.
-- `open_router` (line 22) needs no session: `GET /health` and
+- `open_router` (line 23) needs no session: `GET /health` and
   `GET /privacy/patterns`, neither of which holds anyone's data.
 
 Each `dependencies=[Depends(...)]` runs `api/auth.py` before the route body.
 Line 9 imports the scoped role checks from there.
 
-**Lines 23–33** — `runtime` is the shared development console runtime.
+**Lines 24–34** — `runtime` is the shared development console runtime.
 `caregiver_runtime` and `member_runtime` select the separate runtime for the
 person in the URL. A restart loses nothing: each runtime saves its incidents
 and reviews to its own file (`core/store.py`), and `api/store.py` keeps people,
 invites and mailboxes in SQLite.
 
-### Request and response shapes (lines 36–81)
+### Request and response shapes (lines 37–82)
 
 Each class describes a JSON body. FastAPI rejects a request that does not
 fit, with error 422, before any of our code runs.
@@ -74,7 +74,7 @@ fit, with error 422, before any of our code runs.
 - `StepRequest` — `steps`: how many messages to process; at least 1.
 - `EmailUpload` — `content`: raw `.eml` text.
 - `SharedMessage` — `text` (at least one character), `sender`, `channel`, and
-  `timestamp` (line 63): when the phone received it. The message's id is made
+  `timestamp` (line 64): when the phone received it. The message's id is made
   from the time, sender and text, so a phone that always sends the real
   received time can re-sync its inbox without anything being processed twice.
 - `Feedback` — `legitimate`: true or false.
@@ -82,19 +82,21 @@ fit, with error 422, before any of our code runs.
 - `Withheld` — the reply when a message is discarded: `status` and `reason`.
 - `PersonMessage` — one warning for the person: `incident_id` and `message`.
 
-### Helpers (lines 84–99)
+### Helpers (lines 85–103)
 
-- **84–85 `_now`** — the current UTC time as text.
-- **97–99 `take_in_email`** — one raw email in, one decision out, for one
+- **85–86 `_now`** — the current UTC time as text.
+- **98–103 `take_in_email`** — one raw email in, one decision out, for one
   person's runtime. The API route, the live mailbox and the Gmail scanner all
-  call it, so they cannot behave differently.
-- **88–94 `_take_in`** — the shared path for live intake:
-  - **90–92** — ask the domain whether the row must be withheld. If so, return
+  call it, so they cannot behave differently. The scanner passes `where`, the
+  mailbox and Gmail message id, which goes into the report's metadata (102) so
+  `flag_sender` can move that email to the Bin.
+- **89–95 `_take_in`** — the shared path for live intake:
+  - **91–93** — ask the domain whether the row must be withheld. If so, return
     a `Withheld` reply and store nothing.
-  - **93** — parse it safely. The number passed in comes from
+  - **94** — parse it safely. The number passed in comes from
     `runtime.next_report_number()`, which is never reused, so a report ID made
     from it cannot collide even after the scanner forgets safe mail.
-  - **94** — process it safely. A decision always comes back.
+  - **95** — process it safely. A decision always comes back.
 
 ### Endpoints
 
@@ -129,14 +131,14 @@ reply is sent.
 | 282–290 | `POST /replay/load` | system | Queue a file for step-through replay |
 | 293–297 | `POST /replay/step` | system | Process the next messages in the queue |
 
-**`feedback` in detail (146–156)**
-- **149–150** — only the protected person may answer outside development mode.
-- **151–152** — unknown incident: error 404.
-- **153** — a sentence describing the answer.
-- **154–155** — the answer is wrapped as a `RawInputReport` with `source`
+**`feedback` in detail (150–160)**
+- **153–154** — only the protected person may answer outside development mode.
+- **155–156** — unknown incident: error 404.
+- **157** — a sentence describing the answer.
+- **158–159** — the answer is wrapped as a `RawInputReport` with `source`
   `"person"`. Its metadata names the incident (so the correlator links it
   explicitly) and carries the `feedback` value.
-- **156** — it is processed like any other message. The person's answer is
+- **160** — it is processed like any other message. The person's answer is
   evidence that goes through the same policy; it is not a command.
 
 WhatsApp no longer comes in through a webhook. A Twilio gateway only ever saw
@@ -144,19 +146,19 @@ messages sent to the Twilio number, never the person's own WhatsApp, so it was
 removed. The phone bridge reads the person's WhatsApp notifications and sends
 them through `POST /intake/share/batch` like texts (see `frontend/ANDROID.md`).
 
-**`guardian_briefs` in detail (195–199)** — for every review that is
+**`guardian_briefs` in detail (199–203)** — for every review that is
 `PENDING` and addressed to the `CAREGIVER`, build a brief from the review and
 the decision that opened it.
 
-**`reviews` in detail (188–192)** — `status` and `audience` are optional query
+**`reviews` in detail (192–196)** — `status` and `audience` are optional query
 parameters. `?status=PENDING&audience=PERSON` returns what is waiting for the
 person themselves; with nothing, every review is returned.
 
-**`replay_load` in detail (282–290)**
-- **286** — strip an invisible marker from the start of the text, read the
+**`replay_load` in detail (290–298)**
+- **294** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **287–288** — an unsupported file type returns error 400.
-- **289** — parse every row safely and hand the list to the runtime's queue.
+- **295–296** — an unsupported file type returns error 400.
+- **297** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.
@@ -248,52 +250,96 @@ Reads Gmail through the Google account the **protected person** connected via
 Clerk. Clerk keeps the Google OAuth token and refreshes it; the server asks
 Clerk for it on every call and never stores it. The caregiver's own mailbox is
 never read, and there are no routes here: only helpers that `api/scanner.py`
-and `api/people.py` use.
+and `api/people.py` use. With the person's permission it also moves scam
+emails to the Bin and keeps Bin filters, through `GmailMailbox`.
 
-### Imports and constants (lines 7–18)
+### Imports and constants (lines 9–25)
 
-- **7** — `base64` decodes the raw email Gmail returns.
-- **9** — `Iterator`, the type of a generator that hands back ids one by one.
-- **11** — `httpx` makes the calls to Gmail and to Google's revoke address.
-- **12–13** — Clerk's client for its own API, and FastAPI's `HTTPException`.
-- **15** — `GMAIL`, the Gmail API address for the connected account.
-- **16** — `READ_SCOPE`, the Google permission to read mail and nothing else.
-- **17** — `REVOKE`, Google's address for cancelling a token.
-- **18** — `MAX_PAGES`: a scan looks at up to 10 pages of 50 emails.
+- **9** — `base64` decodes the raw email Gmail returns.
+- **11** — `Iterator`, the type of a generator that hands back ids one by one.
+- **13** — `httpx` makes the calls to Gmail and to Google's revoke address.
+- **14–15** — Clerk's client for its own API, and FastAPI's `HTTPException`.
+- **17** — `MailboxError`, the plain-words error the domain tools understand.
+- **19** — `GMAIL`, the Gmail API address for the connected account.
+- **20** — `READ_SCOPE`, the Google permission to read mail and nothing else.
+- **21** — `MODIFY_SCOPE`, the permission to move mail to the Bin and back. It
+  also allows reading.
+- **22** — `SETTINGS_SCOPE`, the permission to create and delete filters.
+- **23** — `BIN_SCOPES`, both of the above: what binning needs.
+- **24** — `REVOKE`, Google's address for cancelling a token.
+- **25** — `MAX_PAGES`: a scan looks at up to 10 pages of 50 emails.
 
-### `google_token` (lines 21–30)
+### `google_grant` (lines 28–38)
 
-- **23–24** — ask Clerk for the user's Google access token.
-- **25–26** — no Google account connected: 403.
-- **27–28** — Google is connected but without `READ_SCOPE`: 403, with a
-  message saying to sign in with Google again.
-- **29–30** — the token.
+- **30–31** — ask Clerk for the user's Google access token.
+- **32–34** — no Google account connected: 403.
+- **35–37** — Google is connected without read access (neither `READ_SCOPE`
+  nor `MODIFY_SCOPE`): 403, with a message saying to sign in with Google again.
+- **38** — the token and the set of scopes it carries. The scanner uses the
+  scopes to record whether the person allowed the Bin.
 
-### `gmail_get` (lines 33–43)
+### `google_token` (lines 41–43)
 
-One GET to Gmail with the token. Google refusing the token becomes 401,
-refusing access to the mailbox 403, an unknown email 404, and any other Gmail
-error 502. The scanner treats 401 and 403 as "this connection is broken" and
-anything else as a temporary failure. Tests replace this function, so none
-reaches Google.
+Just the token from `google_grant`, for callers that only read.
 
-### `message_ids` (lines 46–56)
+### `gmail_get` and `gmail_call` (lines 46–60)
+
+`gmail_get` is a GET through `gmail_call`. `gmail_call` sends one request of
+any method to Gmail with the token, and a JSON `body` when there is one.
+Google refusing the token becomes 401, refusing access to the mailbox 403, an
+unknown email 404, and any other Gmail error 502. The scanner treats 401 and
+403 as "this connection is broken" and anything else as a temporary failure.
+An empty reply, such as a deleted filter's, becomes `{}` (line 60). Tests
+replace these functions, so none reaches Google.
+
+### `message_ids` (lines 63–73)
 
 A generator of the ids of every email matching a Gmail search, newest first.
-It asks for 50 at a time (line 50) and follows `nextPageToken` (55–56) for at
+It asks for 50 at a time (line 67) and follows `nextPageToken` (72–73) for at
 most `MAX_PAGES` pages, so one scan never runs away on a huge mailbox.
 
-### `raw_email` (lines 59–62)
+### `raw_email` (lines 76–79)
 
 Fetches one email in `raw` format, decodes it from Gmail's URL-safe base64
 (adding back the padding Gmail leaves off) and returns it as the text of an
 `.eml` file, exactly what `take_in_email` expects.
 
-### `revoke` (lines 65–70)
+### `revoke` (lines 82–87)
 
 Tells Google to cancel a token, for the person's Disconnect button. Best
 effort: if Google cannot be reached it prints the error's name and carries on,
 because the person can also remove access in their Google account.
+
+### `_gone` (lines 90–92)
+
+True when the error came from a Gmail 404: the email or filter no longer
+exists because the person deleted it, so there is nothing left to do.
+
+### `GmailMailbox` (lines 95–162)
+
+The real `Mailbox` the domain tools call (see `domain/tools.py`).
+`api/scanner.py` registers it when scanning starts. Every Gmail error becomes
+a `MailboxError` in plain words, so a tool can say what went wrong without
+knowing about HTTP.
+
+- **101–102** — it keeps the store, to find each mailbox's owner.
+- **104–114 `_token`** — the owner's token for a mailbox. Refused when the
+  mailbox is gone, is not a Gmail, or was disconnected (106–107), and when
+  the token lacks `BIN_SCOPES` (112–113). That message tells the caregiver to
+  send a new invite link.
+- **116–121 `_call`** — one Gmail call for a mailbox, with errors turned into
+  `MailboxError`.
+- **123–132 `trash`** — move each message to the Bin and return the ids that
+  moved. One the person already deleted is skipped (130–131).
+- **134–140 `untrash`** — take messages back out of the Bin. One already
+  emptied from the Bin cannot come back and is skipped.
+- **142–147 `find_from`** — the ids of every message from one address. Gmail
+  leaves the Bin and Spam out of a search, so nothing is moved twice.
+- **149–155 `add_filter`** — first look for a filter that already sends this
+  address to the Bin (151–153) and reuse it, reporting it was not created now.
+  Otherwise create one whose action adds the `TRASH` label (154–155).
+- **157–162 `remove_filter`** — delete a filter. One the person already
+  removed is skipped.
 
 ---
 
@@ -303,41 +349,41 @@ Who is calling. Clerk proves who the user is; the store says which person they
 are linked to and in what role. Every route except `/health`, the privacy
 patterns and the invite preview goes through here.
 
-- **13–21 `Caller`** — the user's id, their `role` (`caregiver`, `person`, or
+- **13–22 `Caller`** — the user's id, their `role` (`caregiver`, `person`, or
   `None` before they are linked to anyone), the people they are linked to, and
   `person_id`, the first of those.
-- **24–26 `dev_open`** — development only. `KINGUARD_DEV_OPEN=1` turns Clerk off
+- **25–27 `dev_open`** — development only. `KINGUARD_DEV_OPEN=1` turns Clerk off
   so the plain console and local scripts still work. Off by default.
-- **29–46 `who`** — the user id behind the request.
-  - **31–36** — **a paired phone.** The phone app cannot sign in, so it sends
+- **30–47 `who`** — the user id behind the request.
+  - **32–37** — **a paired phone.** The phone app cannot sign in, so it sends
     its pairing code in an `X-Device-Key` header. The store turns the code into
     the phone's own user id, which is linked to one person as `person`. An
     unknown or replaced code is 401. This runs before the development switch,
     so a phone works the same way in both modes.
-  - **37–38** — in development mode, read the user from an `X-Dev-User` header
+  - **38–39** — in development mode, read the user from an `X-Dev-User` header
     (default `dev`), so a developer can act as different people.
-  - **39–41** — without `CLERK_SECRET_KEY` the server cannot check anyone: 503.
-  - **42** — the front end addresses from `CORS_ORIGINS`; a token is only
+  - **40–42** — without `CLERK_SECRET_KEY` the server cannot check anyone: 503.
+  - **43** — the front end addresses from `CORS_ORIGINS`; a token is only
     accepted if Clerk issued it to one of them.
-  - **43–45** — Clerk checks the `Authorization: Bearer` token; no valid
+  - **44–46** — Clerk checks the `Authorization: Bearer` token; no valid
     session is 401.
-  - **46** — the user id (`sub`).
-- **49–51 `caller`** — looks the user up in the store and builds a `Caller`.
-- **54–58 `caregiver`** — passes only a caregiver. Someone not yet linked to
+  - **47** — the user id (`sub`).
+- **50–55 `caller`** — looks the user up in the store and builds a `Caller`.
+- **58–62 `caregiver`** — passes only a caregiver. Someone not yet linked to
   anyone gets 403 "Add the person you look after first", so a stranger who
   signs up sees nothing. In development mode an unlinked caller is let through.
   A paired phone is a `person`, so it never passes.
-- **61–65 `member`** — passes a caregiver or the protected person; used for the
+- **65–69 `member`** — passes a caregiver or the protected person; used for the
   few routes both may call.
-- **68–70 `_may_see`** — linked to this person, or in development mode with
+- **72–79 `_may_see`** — linked to this person, or in development mode with
   nobody linked yet.
-- **73–84 `caregiver_of`, `member_of`** — the caregiver of *this* person, or
+- **82–93 `caregiver_of`, `member_of`** — the caregiver of *this* person, or
   either of them. Another person's id answers 404, as if it did not exist.
-- **87–106 `active_caregiver_person`, `active_member_person`** — the person a
+- **96–115 `active_caregiver_person`, `active_member_person`** — the person a
   route is about, from the address. With none named, only an unlinked caller in
   development mode is let through (to the shared runtime); anyone else gets
   404 "Name the person in the address".
-- **109–118 `set_clerk_role`** — also writes the role to the user's Clerk public
+- **132–141 `set_clerk_role`** — also writes the role to the user's Clerk public
   metadata so the front end can read it. The store stays the authority: a
   Clerk failure is printed and ignored, because the link is already saved.
 
@@ -352,55 +398,58 @@ separately, one JSON file per person (`core/store.py`).
 - **13–16** — the default file, how long an invite lasts (7 days), the letters a
   phone pairing code is made from (no O, 0, I or 1, which look alike), and how long a
   temporary Gmail failure may last before it counts as a problem (15 minutes).
-- **18–38 `SCHEMA`** — six tables: `people`; `links` (which user is linked to
+- **18–53 `SCHEMA`** — six tables: `people`; `links` (which user is linked to
   which person, as `caregiver` or `person`); `invites`; `mailboxes` (state, the
   Clerk user that owns the Google connection, last check, last error and when
   failures began); `scanned` (a mailbox id, a message id and a verdict, and
   **nothing else about the message**); `phones` (the hash of a pairing code,
   the person, the phone's own user id, and when it was replaced).
-- **40–45 `now`, `stamp`** — the current time, and a time as text.
-- **49–54** — open the file (one shared connection, guarded by a lock) and
+- **55–60 `now`, `stamp`** — the current time, and a time as text.
+- **64–69** — open the file (one shared connection, guarded by a lock) and
   create the tables if missing.
-- **56–64** — `close`, and `reset`, which empties every table for tests.
-- **66–72** — `_one` and `_all` turn rows into plain dictionaries.
-- **75–81** — `people`, `person`.
-- **83–92 `create_person`** — adds a person and links the creator as caregiver;
+- **80–88** — `close`, and `reset`, which empties every table for tests.
+- **90–96** — `_one` and `_all` turn rows into plain dictionaries.
+- **99–105** — `people`, `person`.
+- **107–117 `create_person`** — adds a person and links the creator as caregiver;
   one caregiver may look after several people.
-- **92–108 `links_of`, `people_of`, `first_person`** — find a user's links,
+- **117–133 `links_of`, `people_of`, `first_person`** — find a user's links,
   their people, and the first person assigned the server's IMAP inbox.
-- **109–117 `create_invite`** — a random, unguessable, single-use token.
-- **118–126** — `invite`, and `pending_invites` (not used, cancelled or expired).
-- **127–133 `cancel_invite`** — only an invite still waiting can be cancelled.
-- **134–154 `accept_invite`** — checks again that the link remains usable,
+- **134–142 `create_invite`** — a random, unguessable, single-use token.
+- **143–153** — `invite`, and `pending_invites` (not used, cancelled or expired).
+- **154–160 `cancel_invite`** — only an invite still waiting can be cancelled.
+- **161–261 `accept_invite`** — checks again that the link remains usable,
   marks it used, removes an earlier
-  protected-person account link for this profile (but not a paired phone, line 143), links the accepting user,
+  protected-person account link for this profile (but not a paired phone, line 170), links the accepting user,
   clears verdicts belonging to the replaced mailbox, and adds a new connected
   Gmail mailbox. The same account can reconnect through a fresh invite.
-- **156–164** — `mailbox` and `mailboxes`, each with `checked`, how many
+- **263–271** — `mailbox` and `mailboxes`, each with `checked`, how many
   messages have a verdict.
-- **165–176 `ensure_forwarded`** — the server's own IMAP mailbox, added once.
-- **177–181 `disconnect`** — Gmail mailbox becomes `disconnected`.
-- **182–187 `mark_checked`** — a good scan: `connected`, time noted, errors
+- **272–283 `ensure_forwarded`** — the server's own IMAP mailbox, added once.
+- **284–288 `disconnect`** — Gmail mailbox becomes `disconnected`.
+- **289–294 `mark_checked`** — a good scan: `connected`, time noted, errors
   cleared. Never wakes a `disconnected` mailbox.
-- **188–198 `mark_failure`** — a revoked or refused token (`permanent`) is a
+- **295–299 `set_can_bin`** — whether the person allowed the Bin, as of the
+  last scan. The `can_bin` column is added to older databases by `MIGRATIONS`
+  (line 49).
+- **301–311 `mark_failure`** — a revoked or refused token (`permanent`) is a
   `problem` at once. Anything else only becomes one once failures have lasted
   `OUTAGE_MINUTES`.
-- **202–213 `pair_phone`** — a new 10-character code from `CODE_LETTERS`
+- **315–326 `pair_phone`** — a new 10-character code from `CODE_LETTERS`
   (about 50 bits). The previous phone is unpaired: its links are deleted and
-  its row marked replaced (207–209). Only the code's hash is stored, with a
+  its row marked replaced (320–322). Only the code's hash is stored, with a
   new user id such as `phone:3f9a1c20`, which is linked to the person as
-  `person` (210–211). The code itself is returned once and never kept.
-- **215–219 `phone_user`** — the user id a code stands for, if it is still the
+  `person` (323–324). The code itself is returned once and never kept.
+- **328–332 `phone_user`** — the user id a code stands for, if it is still the
   current one.
-- **221–225 `phone_paired`** — when the current phone was paired, for the
+- **334–338 `phone_paired`** — when the current phone was paired, for the
   dashboard. Never the code.
-- **229–236** — `seen` and `record_scanned`: has this message been handled, and
+- **342–349** — `seen` and `record_scanned`: has this message been handled, and
   remember its verdict.
-- **239–241 `_hash`** — SHA-256 of the code after removing spaces and dashes and
+- **357–359 `_hash`** — SHA-256 of the code after removing spaces and dashes and
   making it upper case, so a code typed loosely on a phone still matches.
-- **244–257 `invite_problem`** — why an invite cannot be used, in words the
+- **362–375 `invite_problem`** — why an invite cannot be used, in words the
   person would understand, or `None` if it can.
-- **260–265 `get_store`** — one shared store, opened on first use so tests can
+- **378–383 `get_store`** — one shared store, opened on first use so tests can
   point `KINGUARD_DB` at `:memory:` first.
 
 ---
@@ -413,8 +462,8 @@ own Gmail. The contract is in `API.md`.
 - **12** — these routes are served under `/api` too, tagged `people`.
 - **15–17 `NewPerson`** — a name (1–80 characters) and an optional relation.
 - **20–23 `_mailbox`** — what a mailbox looks like to the front end: its state,
-  when it was last checked, the last error, how many messages were checked.
-  Never a token, never a message.
+  when it was last checked, the last error, how many messages were checked,
+  and `can_bin`, whether the person allowed the Bin. Never a token, never a message.
 - **26–27 `_invite`** — token and dates.
 - **30–31 `_person`** — id, name and relation without private state.
 - **34–43 `_me`** — the signed-in user's role, first person and full `people`
@@ -434,17 +483,17 @@ own Gmail. The contract is in `API.md`.
 - **103–106 `POST /people/{id}/phone`** — the caregiver gets a pairing code for
   the person's phone app. It is shown once; a new one unpairs the old phone.
 - **109–112 `GET /people/{id}/phone`** — when a phone was paired, or `null`.
-- **115–122 `GET /invites/{token}`** — no sign-in needed. Says whether the link
+- **115–125 `GET /invites/{token}`** — no sign-in needed. Says whether the link
   works, and if so whose name is on it, and nothing else.
-- **125–143 `POST /invites/{token}/accept`** — the person signed in with Google
+- **128–149 `POST /invites/{token}/accept`** — the person signed in with Google
   from the link.
-  - **129–131** — an unusable invite is 410 with a plain reason.
-  - **132–135** — the same protected-person account may reconnect; an account
+  - **133–135** — an unusable invite is 410 with a plain reason.
+  - **138–141** — the same protected-person account may reconnect; an account
     linked elsewhere gets 409, including a caregiver's account.
-  - **136–137** — ask Clerk for the Google token. If Gmail read access was not
+  - **142–143** — ask Clerk for the Google token. If Gmail read access was not
     granted this refuses with a clear reason and the invite stays usable.
-  - **138–143** — link them, store the `person` role in Clerk, return `_me`.
-- **146–158 `POST /me/disconnect`** — only the person whose mail it is. Tells
+  - **144–149** — link them, store the `person` role in Clerk, return `_me`.
+- **170–182 `POST /me/disconnect`** — only the person whose mail it is. Tells
   Google to revoke the token (best effort), marks the mailbox `disconnected`
   and stops scanning at once. Only a new invite reconnects it.
 
@@ -456,41 +505,46 @@ Reads each connected mailbox in the background and keeps only what the
 caregiver needs. Safe mail leaves an id and a verdict. Flagged mail keeps its
 text until its alert is resolved. The caregiver never browses the mailbox.
 
-- **23–25** — look back 14 days on first connection, re-check 120 seconds before
+- **24–26** — look back 14 days on first connection, re-check 120 seconds before
   the last scan so nothing slips between two, and which states count as resolved.
-- **28–41 `handle_mail`** — one email in, then the retention rules. Returns
-  `withheld` (a one-time code: nothing stored), `safe`, or `flagged`. A flagged
-  report is tagged with the mailbox it came from (line 39) so it can be blanked
-  later. Lines 36 and 40 save the runtime afterwards, so the saved file never
+- **29–43 `handle_mail`** — one email in, then the retention rules. Returns
+  `withheld` (a one-time code: nothing stored), `safe`, or `flagged`. Given a
+  Gmail message id, it passes the mailbox and that id into the report (line 33),
+  so `flag_sender` can move the email to the Bin. A flagged
+  report is tagged with the mailbox it came from (line 41) so it can be blanked
+  later. Lines 38 and 42 save the runtime afterwards, so the saved file never
   keeps a safe email that memory has already forgotten.
-- **44–60 `forget`** — removes a safe email's report and decision. If it
+- **46–62 `forget`** — removes a safe email's report and decision. If it
   joined an alert, remove its report id there too. When an action or review
   still refers to the report, keep only an empty audit stub with a safe verdict.
-- **63–84 `blank_resolved`** — for mailbox mail whose alert is resolved or
-  closed, blank the text and sender (line 78), and the alert's summary (80–81).
+- **65–86 `blank_resolved`** — for mailbox mail whose alert is resolved or
+  closed, blank the text and sender (line 80), and the alert's summary (82–83).
   An alert made from a message the caregiver pasted by hand is left alone.
-  Each runtime that blanked something is saved (82–83).
-- **87–114 `scan_gmail`** — one pass over one Gmail mailbox.
-  - **89–93** — first scan: `newer_than:14d`; later: `after:<last check minus 120s>`.
-  - **95–109** — get the person's token from Clerk; before and after fetching
+  Each runtime that blanked something is saved (84–85).
+- **89–117 `scan_gmail`** — one pass over one Gmail mailbox.
+  - **91–95** — first scan: `newer_than:14d`; later: `after:<last check minus 120s>`.
+  - **97–112** — get the person's token and its scopes from Clerk, and record
+    whether they include `BIN_SCOPES` (line 99); before and after fetching
     each message, confirm its mailbox is still connected to the same owner.
-    Skip ids already seen, read the rest, record each verdict, then mark it
-    checked.
-  - **110–111** — Google refusing the token (401, 403) is a permanent failure.
-  - **112–113** — anything else, such as the network, is temporary and becomes a
+    Skip ids already seen, read the rest with their Gmail id (line 110), record
+    each verdict, then mark it checked.
+  - **113–114** — Google refusing the token (401, 403) is a permanent failure.
+  - **115–116** — anything else, such as the network, is temporary and becomes a
     problem only after 15 minutes.
-- **117–122 `scan_once`** — every Gmail mailbox not `disconnected`, then blank
+- **120–125 `scan_once`** — every Gmail mailbox not `disconnected`, then blank
   what is resolved.
-- **125–133 `forwarded_handler`** — the same rules for the server's own IMAP
+- **128–136 `forwarded_handler`** — the same rules for the server's own IMAP
   mailbox, recording a verdict per email under a hash of its text. With nobody
   looked after yet it behaves as before.
-- **136–143 `note_forwarded`** — record whether the last IMAP check worked.
-- **146–163 `start_scanning`** — without `CLERK_SECRET_KEY` do nothing, since
-  tokens come from Clerk. Otherwise a background thread scans every
+- **139–146 `note_forwarded`** — record whether the last IMAP check worked.
+- **149–167 `start_scanning`** — without `CLERK_SECRET_KEY` do nothing, since
+  tokens come from Clerk. Otherwise register `GmailMailbox` for the domain
+  tools (line 154), so flagged mail can be moved to the Bin, and start a
+  background thread that scans every
   `SCAN_SECONDS` (default 60) and never stops on an error.
 
 Not yet run against a real Gmail account: the tests use stand-ins for Clerk and
-Gmail.
+Gmail. That includes moving mail to the Bin and the `TRASH` filter.
 
 ---
 

@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS calls (
 MIGRATIONS = {
     "links": {"circle_role": "TEXT", "name": "TEXT NOT NULL DEFAULT ''", "joined_at": "TEXT"},
     "invites": {"role": "TEXT", "name": "TEXT NOT NULL DEFAULT ''"},
+    "mailboxes": {"can_bin": "INTEGER NOT NULL DEFAULT 0"},
 }
 CIRCLE_ROLES = ("next_of_kin", "caregiver", "helper")
 CALLS_KEPT = 200  # the newest calls listed per person
@@ -289,6 +290,12 @@ class Store:
         with self.lock:
             self.db.execute("UPDATE mailboxes SET status = 'connected', last_checked = ?, last_error = NULL, failing_since = NULL WHERE id = ? AND status != 'disconnected'",
                             (stamp(now()), mailbox_id))
+            self.db.commit()
+
+    def set_can_bin(self, mailbox_id: str, allowed: bool) -> None:
+        """Whether the person let Scam Stop move mail to the Bin and keep filters, as of the last scan."""
+        with self.lock:
+            self.db.execute("UPDATE mailboxes SET can_bin = ? WHERE id = ?", (int(allowed), mailbox_id))
             self.db.commit()
 
     def mark_failure(self, mailbox_id: str, reason: str, permanent: bool) -> None:

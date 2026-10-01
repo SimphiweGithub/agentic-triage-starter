@@ -93,7 +93,7 @@ Lower-cases the name, keeps only letters and digits, and joins the pieces with
 single spaces. `"TECHCARE  Support!"` becomes `"techcare support"`. This is how
 two spellings of one merchant are compared.
 
-### `extract_signals` (lines 43–71)
+### `extract_signals` (lines 43–72)
 
 Takes the message `text` and its `metadata`, and returns a dictionary called
 the **signals**. This dictionary is what the rest of the domain reasons about.
@@ -121,7 +121,7 @@ the **signals**. This dictionary is what the rest of the domain reasons about.
   label while the link goes somewhere else, for example a link that shows
   `www.yourbank.example` but leads to the scammer. Those belong to the victim
   brand, not the sender, so they must not be treated as the sender's.
-- **Lines 59–71** — the returned dictionary:
+- **Lines 59–72** — the returned dictionary:
   - `kind` — `"mandate"`, `"debit"` or `"message"`.
   - `merchant` — normalised name.
   - `amount` — number or `None`.
@@ -132,6 +132,8 @@ the **signals**. This dictionary is what the rest of the domain reasons about.
   - `phones` — each phone number reduced to digits only (`\D` means
     "not a digit"), unique and sorted.
   - `auth_fail` — whether the mail provider's authentication failed.
+  - `sender_verified` — whether the sender's domain vouched for the From address
+    (DMARC pass). Only then may a standing Bin filter be offered for it.
   - `link_mismatch` — true if any link's label shows a domain different from
     its target. This is a classic phishing trick.
 
@@ -171,7 +173,7 @@ Builds an ID such as `E-8d863f2f`: a prefix plus the first eight characters of
 a SHA-1 hash of the value. The same email always gets the same ID, so sending
 it twice does not create two reports.
 
-### `email_to_row` (lines 39–66)
+### `email_to_row` (lines 39–67)
 
 - **Line 40** — parse the raw `.eml` text into a `message` object.
 - **Line 41** — `body_part` is the plain-text body if there is one, otherwise
@@ -186,16 +188,18 @@ it twice does not create two reports.
   If the date is missing or malformed, use an empty string; nothing crashes.
 - **Line 53** — `authentication` is the `Authentication-Results` header, which
   the receiving mail server adds to say whether the sender passed its checks.
-- **Lines 54–66** — the row:
+- **Lines 54–67** — the row:
   - `report_id` — from the `Message-ID`, or from the whole text if there is none.
   - `source` — always `"email"`.
   - `payload` — the subject, a line break, and the body.
   - `metadata.sender`, `sender_name`, `reply_to`.
   - `metadata.auth_fail` — true if the header contains `spf=fail`,
     `dkim=fail` or `dmarc=fail`.
+  - `metadata.sender_verified` — true if the header contains `dmarc=pass`: the
+    From address really belongs to the sender, so it was not forged.
   - `metadata.links` — the `(label, target)` pairs.
 
-### `share_to_row` (lines 69–77)
+### `share_to_row` (lines 70–78)
 
 For a message shared by hand from the phone. The ID is a hash of the time,
 sender and text. `source` is the channel, for example `"sms"`.

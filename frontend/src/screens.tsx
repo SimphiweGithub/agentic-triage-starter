@@ -7,7 +7,7 @@ import { Button } from './components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
 import { ROLE } from './circle'
-import { formatTime, reviewQuestion } from './format'
+import { formatTime, reviewQuestion, warnedAboutBin } from './format'
 import type { InviteLook, Me, Review } from './types'
 
 function Centered({ children }: { children: ReactNode }) {
@@ -271,6 +271,7 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
                 <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerIncident(warning.incident_id, true)}>This is mine</Button>
                 <Button variant="outline" disabled={Boolean(answering)} onClick={() => answerIncident(warning.incident_id, false)}>I did not agree to this</Button>
               </div>
+              {warnedAboutBin(warning.message) && <p className="text-sm text-muted-foreground">If this email is really yours, “This is mine” puts it back in your inbox.</p>}
             </section>
           ))}
         </CardContent>

@@ -18,6 +18,7 @@ export type ActionType =
   | 'WARN_PERSON'
   | 'ADVISE_DECLINE'
   | 'FLAG_SENDER'
+  | 'FILTER_SENDER'
   | 'DRAFT_DISPUTE'
   | 'BLOCK_OPERATOR'
   | 'WITHDRAW'
@@ -155,6 +156,8 @@ export type Mailbox = {
   last_error: string | null
   /** How many messages have been checked. */
   checked: number
+  /** The person allowed Scam Stop to move scam email to the Bin and keep filters, as of the last check. */
+  can_bin?: boolean
 }
 
 export type PersonRecord = { id: string; name: string; relation: string }

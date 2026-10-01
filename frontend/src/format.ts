@@ -1,4 +1,4 @@
-import type { ActionType, Incident, IncidentState, KinGuardState, Report, Review, Severity } from './types'
+import type { ActionRecord, ActionType, Incident, IncidentState, KinGuardState, Mailbox, Report, Review, Severity } from './types'
 
 /**
  * The person being looked after. It is filled in from the server before the dashboard shows,
@@ -72,6 +72,8 @@ export function actionLabel(type: ActionType, details: Record<string, unknown> =
   switch (type) {
     case 'FLAG_SENDER':
       return target ? `Marked ${target} as a scammer` : 'Marked the sender as a scammer'
+    case 'FILTER_SENDER':
+      return target ? `Send all mail from ${target} to the Bin` : 'Send this sender’s mail to the Bin'
     case 'WARN_PERSON':
       return `Warned ${PERSON.name}`
     case 'DRAFT_DISPUTE':
@@ -151,7 +153,7 @@ export function traceToSteps(lines: string[]): Step[] {
         body: requested !== granted ? `Asked for ${STATUS_WORD[requested as IncidentState] ?? requested}; the rules allowed ${word}.` : undefined,
         tone: 'neutral',
       })
-    } else if ((match = line.match(/^(?:Action|Review (REV-\d+)): (\w+) → (\w+)(?: \((.*)\))?$/))) {
+    } else if ((match = line.match(/^(?:Action|Follow-up|Review (REV-\d+)): (\w+) → (\w+)(?: \((.*)\))?$/))) {
       const [, reviewId, type, outcome, detail] = match
       const label = actionLabel(type as ActionType)
       const done = outcome === 'EXECUTED'
@@ -223,6 +225,8 @@ export function approveLabel(review: Review): string {
       return 'Yes, prepare the dispute'
     case 'BLOCK_OPERATOR':
       return 'Yes, stop these debits'
+    case 'FILTER_SENDER':
+      return 'Yes, send their mail to the Bin'
     default:
       return 'Yes, go ahead'
   }
@@ -245,7 +249,9 @@ export function approveEffect(review: Review): string {
     case 'BLOCK_OPERATOR':
       return 'Scam Stop asks the bank to refuse every debit from this company.'
     case 'FLAG_SENDER':
-      return `Scam Stop marks this sender as a scammer, warns ${PERSON.name} about anything else they send, and tells ${PERSON.name} how to block them.`
+      return `Scam Stop marks this sender as a scammer, warns ${PERSON.name} about anything else they send, and tells ${PERSON.name} how to block them. An email in ${PERSON.name}’s connected Gmail also moves to the Bin.`
+    case 'FILTER_SENDER':
+      return `Gmail sends every future email from this address straight to ${PERSON.name}’s Bin, and their earlier emails move there too. It can be undone, and binned emails can be restored for 30 days.`
     case 'WITHDRAW':
       return 'Scam Stop undoes what it did earlier, for example un-marking a sender.'
     default:
@@ -260,6 +266,8 @@ export function rejectEffect(review: Review): string {
       return 'Nothing is written. Scam Stop keeps watching this company.'
     case 'BLOCK_OPERATOR':
       return 'Debits are not stopped. Scam Stop keeps watching and will ask again if it happens again.'
+    case 'FILTER_SENDER':
+      return `No filter is made. The sender stays marked as a scammer, and Scam Stop keeps warning ${PERSON.name} about their emails.`
     default:
       return 'Nothing is done. Scam Stop keeps watching.'
   }
@@ -274,9 +282,41 @@ export function decisionKind(review: Review): string {
       return 'Stop a company taking money'
     case 'FLAG_SENDER':
       return 'Mark a sender as a scammer'
+    case 'FILTER_SENDER':
+      return 'Send a scammer’s email to the Bin'
     case 'WITHDRAW':
       return 'Undo earlier actions'
     default:
       return 'Check an alert'
   }
+}
+
+// ---- scam email in the person's Bin (see backend/API.md, "Scam email in the Bin") ----
+
+/** What is in the person's Bin, or filtered there, because of this alert. Empty once it was undone. */
+export function binEffects(incident: Incident): string[] {
+  const ran = incident.actions.filter((item) => item.outcome === 'EXECUTED')
+  const undone = ran.some((item) => item.action.type === 'WITHDRAW')
+  if (undone) return []
+  return ran.flatMap((item) => binEffect(item) ?? [])
+}
+
+function binEffect(record: ActionRecord): string | undefined {
+  const target = typeof record.action.details.target === 'string' ? record.action.details.target : 'this sender'
+  if (record.action.type === 'FLAG_SENDER' && record.detail.includes('email moved to the Bin')) return `The email was moved to ${PERSON.name}’s Bin.`
+  if (record.action.type === 'FILTER_SENDER') {
+    const earlier = record.detail.match(/(\d+) earlier email/)?.[1]
+    return `New email from ${target} goes straight to ${PERSON.name}’s Bin.` + (earlier && earlier !== '0' ? ` ${earlier} earlier ${earlier === '1' ? 'email was' : 'emails were'} moved there too.` : '')
+  }
+  return undefined
+}
+
+/** A connected Gmail that can be read but not cleaned: the person has not allowed the Bin yet. Unknown is not a problem. */
+export function binNotAllowed(mailbox: Mailbox): boolean {
+  return mailbox.kind === 'gmail' && mailbox.status === 'connected' && Boolean(mailbox.last_checked) && mailbox.can_bin === false
+}
+
+/** The warning told the person their email went to the Bin, so "This is mine" also brings it back. */
+export function warnedAboutBin(message: string): boolean {
+  return message.includes('moved this email to your Bin')
 }

@@ -30,7 +30,8 @@ from domain.investigate import investigate
 from domain.language import write_person_message
 from domain.intake import email_to_row
 from domain.logic import parse_record, parse_timestamp, withhold
-from domain.tools import WORLD, World, default_world, domain_age, identify_operator, merchant_registry, reset_world
+from domain.tools import (WORLD, MailboxError, World, default_world, domain_age, filter_sender, identify_operator, merchant_registry,
+                          reset_world, restore_world, set_mailbox, use_world)
 from domain.policy import ALLOWED_SERVICE_ACTIONS, FORBIDDEN_ACTIONS
 from domain.schemas import ActionProposal, Assessment, RawInputReport
 from evaluation import clustering, evaluate, load_jsonl
@@ -899,9 +900,9 @@ class ScannerTests(unittest.TestCase):
         def token_for(user_id):
             if failure:
                 raise failure
-            return "google-token"
+            return "google-token", {gmail.READ_SCOPE}
 
-        with patch.object(scanner, "google_token", token_for), patch.object(scanner, "message_ids", ids), \
+        with patch.object(scanner, "google_grant", token_for), patch.object(scanner, "message_ids", ids), \
                 patch.object(scanner, "raw_email", lambda token, message_id: inbox[message_id]):
             scanner.scan_once(self.store)
         return self.store.mailbox(self.mailbox["id"])
@@ -940,7 +941,7 @@ class ScannerTests(unittest.TestCase):
         invite = self.store.create_invite(other["id"], "caregiver_1")
         other_box = self.store.accept_invite(invite["token"], "person_2")
         inboxes = {"tok-person_1": {"a": self.lure}, "tok-person_2": {}}     # only Thandi's mailbox holds the lure
-        with patch.object(scanner, "google_token", lambda user_id: f"tok-{user_id}"),                 patch.object(scanner, "message_ids", lambda token, query: iter(list(inboxes[token]))),                 patch.object(scanner, "raw_email", lambda token, message_id: inboxes[token][message_id]):
+        with patch.object(scanner, "google_grant", lambda user_id: (f"tok-{user_id}", {gmail.READ_SCOPE})),                 patch.object(scanner, "message_ids", lambda token, query: iter(list(inboxes[token]))),                 patch.object(scanner, "raw_email", lambda token, message_id: inboxes[token][message_id]):
             scanner.scan_once(self.store)
         self.assertEqual(len(self.rt.incidents), 1)
         self.assertEqual(len(pool.runtime_for(other["id"]).incidents), 0)
@@ -951,8 +952,8 @@ class ScannerTests(unittest.TestCase):
     def test_a_message_already_scanned_is_not_read_again(self):
         self.scan()
         reads = []
-        with patch.object(scanner, "handle_mail", lambda mailbox, raw: reads.append(raw) or "safe"):
-            with patch.object(scanner, "google_token", return_value="t"), patch.object(scanner, "message_ids", lambda t, q: iter(["a", "b"])), \
+        with patch.object(scanner, "handle_mail", lambda mailbox, raw, message_id=None: reads.append(raw) or "safe"):
+            with patch.object(scanner, "google_grant", return_value=("t", {gmail.READ_SCOPE})), patch.object(scanner, "message_ids", lambda t, q: iter(["a", "b"])), \
                     patch.object(scanner, "raw_email", lambda t, m: self.inbox[m]):
                 scanner.scan_once(self.store)
         self.assertEqual(reads, [])
@@ -1016,6 +1017,189 @@ class ScannerTests(unittest.TestCase):
         first = self.rt.next_report_number()
         scanner.handle_mail(self.mailbox, SAFE_EMAIL)
         self.assertEqual(self.rt.next_report_number(), first + 2)
+
+    def test_flagged_mail_remembers_which_gmail_message_it_was(self):
+        self.scan()
+        report = next(iter(self.rt.reports.values()))
+        self.assertEqual((report.metadata["mailbox"], report.metadata["gmail_id"]), (self.mailbox["id"], "a"))
+        self.assertFalse(self.store.mailbox(self.mailbox["id"])["can_bin"])     # read access only
+
+    def test_the_mailbox_shows_when_the_person_allowed_the_bin(self):
+        with patch.object(scanner, "google_grant", return_value=("t", gmail.BIN_SCOPES)), \
+                patch.object(scanner, "message_ids", lambda t, q: iter([])):
+            scanner.scan_once(self.store)
+        self.assertTrue(people._mailbox(self.store.mailbox(self.mailbox["id"]))["can_bin"])
+
+
+VERIFIED_LURE = (ROOT / "samples" / "lure.eml").read_text(encoding="utf-8").replace(
+    "spf=fail smtp.mailfrom=techcare-help.example; dkim=none",
+    "spf=pass smtp.mailfrom=techcare-help.example; dkim=pass; dmarc=pass header.from=techcare-help.example")
+SCAMMER = "support@techcare-help.example"
+
+
+class FakeMailbox:
+    """A Gmail stand-in: an inbox, a Bin and filters, keyed by message id. Ids start with the sender's address."""
+
+    def __init__(self, inbox=(), filters=None, refuse=None):
+        self.inbox, self.bin, self.filters, self.refuse = set(inbox), set(), dict(filters or {}), refuse
+
+    def trash(self, mailbox_id, message_ids):
+        if self.refuse:
+            raise MailboxError(self.refuse)
+        moved = [item for item in message_ids if item in self.inbox]
+        self.inbox -= set(moved)
+        self.bin |= set(moved)
+        return moved
+
+    def untrash(self, mailbox_id, message_ids):
+        self.bin -= set(message_ids)
+        self.inbox |= set(message_ids)
+
+    def find_from(self, mailbox_id, sender):
+        return sorted(item for item in self.inbox if item.startswith(sender))
+
+    def add_filter(self, mailbox_id, sender):
+        found = next((key for key, value in self.filters.items() if value == sender), None)
+        if found:
+            return found, False
+        key = f"F{len(self.filters) + 1}"
+        self.filters[key] = sender
+        return key, True
+
+    def remove_filter(self, mailbox_id, filter_id):
+        self.filters.pop(filter_id)
+
+
+class BinTests(unittest.TestCase):
+    """Scam email moved to the person's Bin, and a standing filter only with the caregiver's approval."""
+
+    def setUp(self):
+        self.mail = FakeMailbox(inbox={f"{SCAMMER}#new", f"{SCAMMER}#old", "friend#1"})
+        set_mailbox(self.mail)
+        self.rt = TriageRuntime(world=World())
+
+    def tearDown(self):
+        set_mailbox(None)
+
+    def take(self, raw=VERIFIED_LURE):
+        return take_in_email(raw, self.rt, {"mailbox": "M1", "gmail_id": f"{SCAMMER}#new"})
+
+    def filter_review(self):
+        return next((item for item in self.rt.reviews.values()
+                     if item.proposed_action and item.proposed_action.type is ActionType.FILTER_SENDER), None)
+
+    def test_a_flagged_email_goes_to_the_bin_and_the_person_is_told(self):
+        decision = self.take()
+        self.assertEqual((decision.proposed_action.type, decision.action_outcome), (ActionType.FLAG_SENDER, ActionOutcome.EXECUTED))
+        self.assertEqual(self.mail.bin, {f"{SCAMMER}#new"})                   # only the email itself, not the earlier one
+        self.assertIn("moved this email to your Bin", self.rt.world.outbox[-1]["message"])
+
+    def test_the_standing_filter_waits_for_the_caregiver(self):
+        decision = self.take()
+        review = self.filter_review()
+        self.assertIsNotNone(review)
+        self.assertEqual(review.proposed_action.details["target"], SCAMMER)
+        self.assertTrue(decision.requires_human_approval)
+        self.assertEqual(self.mail.filters, {})                               # nothing until approved
+        self.rt.decide_review(review.review_id, approved=True)
+        self.assertEqual(self.mail.filters, {"F1": SCAMMER})
+        self.assertEqual(self.mail.bin, {f"{SCAMMER}#new", f"{SCAMMER}#old"})  # earlier mail binned too
+        self.assertIn("friend#1", self.mail.inbox)
+        self.assertEqual(self.rt.incidents[decision.incident_id].status, IncidentState.CONTAINED)
+
+    def test_a_spoofable_sender_is_binned_but_never_filtered(self):
+        self.take((ROOT / "samples" / "lure.eml").read_text(encoding="utf-8"))  # spf=fail: the From line may be forged
+        self.assertIn(f"{SCAMMER}#new", self.mail.bin)
+        self.assertIsNone(self.filter_review())
+
+    def test_undo_restores_the_mail_and_removes_only_our_filter(self):
+        decision = self.take()
+        self.rt.decide_review(self.filter_review().review_id, approved=True)
+        answer = self.rt.process(RawInputReport(report_id="F1", source="person", payload="legitimate",
+                                                metadata={"incident_id": decision.incident_id, "feedback": "legitimate"}))
+        if answer.review_id:                                                  # strong evidence: the caregiver confirms
+            self.rt.decide_review(answer.review_id, approved=True)
+        self.assertEqual(self.mail.bin, set())
+        self.assertEqual(self.mail.filters, {})
+        self.assertEqual(self.rt.world.binned, {})
+
+    def test_undo_keeps_a_filter_the_person_made_themselves(self):
+        self.mail.filters = {"MINE": SCAMMER}
+        decision = self.take()
+        self.rt.decide_review(self.filter_review().review_id, approved=True)
+        answer = self.rt.process(RawInputReport(report_id="F1", source="person", payload="legitimate",
+                                                metadata={"incident_id": decision.incident_id, "feedback": "legitimate"}))
+        if answer.review_id:
+            self.rt.decide_review(answer.review_id, approved=True)
+        self.assertEqual(self.mail.filters, {"MINE": SCAMMER})
+
+    def test_without_a_mailbox_the_sender_is_still_flagged_and_nothing_is_claimed(self):
+        set_mailbox(None)
+        decision = self.take()
+        self.assertEqual(decision.action_outcome, ActionOutcome.EXECUTED)
+        self.assertIn("techcare-help.example", self.rt.world.flagged)
+        self.assertNotIn("Bin", self.rt.world.outbox[-1]["message"])
+
+    def test_a_refused_bin_does_not_stop_the_flag(self):
+        self.mail.refuse = "Google refused access to the mailbox."
+        decision = self.take()
+        self.assertEqual(decision.action_outcome, ActionOutcome.EXECUTED)
+        self.assertNotIn("Bin", self.rt.world.outbox[-1]["message"])
+
+    def test_a_whole_domain_is_never_filtered(self):
+        action = ActionProposal(type=ActionType.FILTER_SENDER, service=ServiceDomain.MAIL_FILTER,
+                                details={"target": "techcare-help.example", "mailbox": "M1"})
+        result = filter_sender(action, None, RawInputReport(report_id="X", payload=""))
+        self.assertFalse(result.ok)
+        self.assertEqual(self.mail.filters, {})
+
+    def test_what_was_binned_survives_a_restart(self):
+        self.take()
+        saved = json.loads(json.dumps(self.rt.world.__dict__ | {"flagged": [], "blocked": [], "trusted": [], "known_senders": []}))
+        with use_world(World()):
+            restore_world(saved)
+            self.assertEqual(WORLD.binned, self.rt.world.binned)
+
+
+class GmailMailboxTests(unittest.TestCase):
+    """The real adapter, with Clerk and Gmail replaced by stand-ins."""
+
+    def setUp(self):
+        self.store = Store(":memory:")
+        person = self.store.create_person("Thandi", "Gran", "caregiver_1")
+        self.box = self.store.accept_invite(self.store.create_invite(person["id"], "caregiver_1")["token"], "person_1")
+        self.gmail = gmail.GmailMailbox(self.store)
+
+    def tearDown(self):
+        self.store.close()
+
+    def test_read_only_access_is_refused_in_plain_words(self):
+        with patch.object(gmail, "google_grant", return_value=("t", {gmail.READ_SCOPE})):
+            with self.assertRaises(MailboxError) as refused:
+                self.gmail.trash(self.box["id"], ["m1"])
+        self.assertIn("new invite link", str(refused.exception))
+
+    def test_an_email_the_person_already_deleted_is_skipped(self):
+        def call(method, token, path, **kwargs):
+            if "gone" in path:
+                raise gmail.HTTPException(404, "Email not found")
+            return {}
+        with patch.object(gmail, "google_grant", return_value=("t", gmail.BIN_SCOPES)), patch.object(gmail, "gmail_call", call):
+            self.assertEqual(self.gmail.trash(self.box["id"], ["gone", "m2"]), ["m2"])
+
+    def test_an_existing_bin_filter_is_reused_not_duplicated(self):
+        calls = []
+        def call(method, token, path, **kwargs):
+            calls.append(method)
+            return {"filter": [{"id": "MINE", "criteria": {"from": SCAMMER}, "action": {"addLabelIds": ["TRASH"]}}]}
+        with patch.object(gmail, "google_grant", return_value=("t", gmail.BIN_SCOPES)), patch.object(gmail, "gmail_call", call):
+            self.assertEqual(self.gmail.add_filter(self.box["id"], SCAMMER), ("MINE", False))
+        self.assertEqual(calls, ["GET"])
+
+    def test_a_disconnected_mailbox_is_never_touched(self):
+        self.store.disconnect(self.box["person_id"])
+        with self.assertRaises(MailboxError):
+            self.gmail.trash(self.box["id"], ["m1"])
 
 
 MANDATE = "Nedbank: Mandate registered for R189.00 by TECHCARE SUPPORT. Reply within 24h to reject."

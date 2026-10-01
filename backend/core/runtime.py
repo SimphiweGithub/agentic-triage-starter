@@ -92,6 +92,14 @@ class TriageRuntime:
                 return fallback
         return assess(report, incident)
 
+    @staticmethod
+    def _already_taken(incident: IncidentRecord, action) -> bool:
+        """The same action, for the same target, was already proposed, run or held for this incident."""
+        identity = ACTION_IDENTITY.get(action.type)
+        return action.type not in REPEATABLE_ACTIONS and any(
+            record.outcome in ENGAGED and record.action.type == action.type and record.action.service == action.service
+            and record.action.details.get(identity) == action.details.get(identity) for record in incident.actions)
+
     def _pending(self, incident_id: str) -> list[ReviewItem]:
         return [item for item in self.reviews.values() if item.incident_id == incident_id and item.status == "PENDING"]
 
@@ -124,10 +132,7 @@ class TriageRuntime:
             if action is not None:
                 if match.relationship is Relationship.DUPLICATE:
                     action, suppressed, outcome = None, action, ActionOutcome.SUPPRESSED_DUPLICATE
-                elif action.type not in REPEATABLE_ACTIONS and any(
-                        record.outcome in ENGAGED and record.action.type == action.type and record.action.service == action.service
-                        and record.action.details.get(ACTION_IDENTITY.get(action.type)) == action.details.get(ACTION_IDENTITY.get(action.type))
-                        for record in incident.actions):
+                elif self._already_taken(incident, action):
                     action, suppressed, outcome = None, action, ActionOutcome.SUPPRESSED_REPEAT
 
             next_state = transition_state(incident.status, assessment.requested_state)
@@ -136,7 +141,7 @@ class TriageRuntime:
 
             # Act, check, correct. Each attempt is gated by the guardrails inside the executor.
             attempts = execute_with_correction(action, assessment.confidence, incident, report) if action is not None else []
-            action_trigger = None
+            action_trigger, review_action = None, None  # review_action: set when the follow-up, not the main action, needs the human
             if attempts:
                 action, outcome = attempts[-1].action, attempts[-1].outcome
                 incident.actions.extend(attempts)
@@ -154,6 +159,17 @@ class TriageRuntime:
                 trace.append(f"Action: {suppressed.type.value} → {outcome.value}")
             else:
                 trace.append("Policy: No action proposed")
+
+            # Follow-up: a second action, tried only once the first has run. The same guardrails gate it.
+            follow_up = assessment.follow_up_action
+            if follow_up is not None and outcome is ActionOutcome.EXECUTED and not self._already_taken(incident, follow_up):
+                later = execute_with_correction(follow_up, assessment.confidence, incident, report)
+                incident.actions.extend(later)
+                trace += [f"Follow-up: {item.action.type.value} → {item.outcome.value} ({item.detail})" for item in later]
+                if later[-1].outcome is ActionOutcome.HELD_FOR_REVIEW:
+                    action_trigger, review_action = later[-1].detail, later[-1].action
+                elif later[-1].outcome is ActionOutcome.FAILED:
+                    action_trigger, review_action = f"Follow-up failed and no correction worked: {later[-1].detail}", later[-1].action
             trigger = ("Illegal lifecycle transition" if illegal
                        else "State requires human review" if next_state is IncidentState.PENDING_REVIEW
                        else action_trigger or assessment.review_reason)
@@ -161,7 +177,8 @@ class TriageRuntime:
             # Sticky review: a trigger sets the hold; it clears only when no review is pending and the risk is gone.
             review_id = None
             if trigger:
-                review_id = self._open_review(report, incident, trigger, action, assessment.review_delay_seconds)
+                review_id = self._open_review(report, incident, trigger, review_action if review_action and trigger == action_trigger else action,
+                                              assessment.review_delay_seconds)
                 incident.review_hold = trigger
                 trace.append(f"Review: {trigger} ({review_id})")
             pending = self._pending(incident.incident_id)

@@ -11,7 +11,7 @@ from domain.language import write_person_message
 from domain.policy import (CONTAIN_THRESHOLD, COOLING_OFF_SECONDS, DISPUTE_WINDOW_DAYS, GATE_THRESHOLD, HIGH_AMOUNT,
                            PROTECTED_DOMAINS, REVIEW_HOLD_SEVERITIES, YOUNG_DAYS)
 from domain.schemas import ActionProposal, Assessment, IncidentRecord, RawInputReport
-from domain.tools import WORLD, identify_operator
+from domain.tools import WORLD, identify_operator, is_single_address
 
 # One sentence added to a warning so the person knows how this kind of scam ends.
 THREAT_HINTS: dict[ThreatDomain, str] = {
@@ -137,6 +137,24 @@ def learn_from_review(approved: bool, action: ActionProposal | None, report: Raw
         WORLD.known_senders.add(sender)
 
 
+def _bin_filter(report: RawInputReport, signals: dict[str, Any]) -> ActionProposal | None:
+    """A standing Bin filter for this sender, offered to the caregiver after the sender is flagged.
+
+    Only for an email that reached a connected mailbox, from one exact address whose
+    domain vouched for it (DMARC pass). A spoofed From line would otherwise teach the
+    filter to bin the real sender, such as the person's bank.
+    """
+    sender, mailbox = signals["sender"], report.metadata.get("mailbox")
+    if not mailbox or not signals.get("sender_verified") or not is_single_address(sender):
+        return None
+    if any(entry.get("target") == sender and entry.get("filter_id") for entry in WORLD.binned.values()):
+        return None  # already filtered
+    return ActionProposal(type=ActionType.FILTER_SENDER, service=ServiceDomain.MAIL_FILTER, details={
+        "target": sender, "mailbox": mailbox,
+        "ask": f"Send every future email from {sender} straight to the Bin, and move their earlier emails there too? "
+               "It can be undone, and binned emails can be restored for 30 days."})
+
+
 def _kind_wording(standard: str) -> str:
     """Optionally let the language model reword a warning. The standard wording is used if it is off, fails, or is unsafe."""
     if os.getenv("ENABLE_GEMINI") != "1":
@@ -200,6 +218,7 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
                    for record in incident.actions)
     who = signals["merchant"] or (signals["sender"] if shared_provider or not signals["sender_domain"] else signals["sender_domain"]) or "an unknown sender"
     severity, target_state = SeverityLevel.MEDIUM, IncidentState.CONTAINED
+    follow_up = None
 
     amount_text = f"R{signals['amount']:.2f}" if signals["amount"] is not None else "an amount"
     if is_mandate:
@@ -243,6 +262,7 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
                        f"Scam Stop has marked this sender as a scammer and will warn you about anything else they send."
                        + BLOCK_HOW.get(report.source, ""),
             "ask": f"A message from {who} looks like a scam. Mark the sender as a scammer and send a warning?"})
+        follow_up = _bin_filter(report, signals)
     else:
         severity, target_state = SeverityLevel.LOW, IncidentState.INVESTIGATING
         action = ActionProposal(type=ActionType.WARN_PERSON, service=ServiceDomain.PERSON, details={
@@ -254,4 +274,4 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     if incident.status is IncidentState.RESOLVED:
         target_state = IncidentState.INVESTIGATING
     return Assessment(severity=severity, confidence=confidence, requested_state=target_state, proposed_action=action,
-                      rationale=rationale, review_reason=review_reason, labels=labels)
+                      rationale=rationale, review_reason=review_reason, labels=labels, follow_up_action=follow_up)

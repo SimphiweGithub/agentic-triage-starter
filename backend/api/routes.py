@@ -95,9 +95,12 @@ def _take_in(row: dict, rt: TriageRuntime) -> DecisionRecord | Withheld:
     return rt.process_safely(report, error)
 
 
-def take_in_email(raw: str, rt: TriageRuntime | None = None) -> DecisionRecord | Withheld:
-    """One raw email, from the API or from a mailbox, for one person's runtime (the shared one if none is given)."""
-    return _take_in(email_to_row(raw), rt or default_runtime())
+def take_in_email(raw: str, rt: TriageRuntime | None = None, where: dict | None = None) -> DecisionRecord | Withheld:
+    """One raw email, from the API or from a mailbox, for one person's runtime (the shared one if none is given).
+    `where` says which mailbox and message it is, so a tool can move it to the Bin."""
+    row = email_to_row(raw)
+    row["metadata"].update(where or {})
+    return _take_in(row, rt or default_runtime())
 
 
 # ---- intake: how messages get in ----

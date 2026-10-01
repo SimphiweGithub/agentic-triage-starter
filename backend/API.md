@@ -186,10 +186,42 @@ actions that were deliberately not repeated.
 | `status` (incident) | `NEW`, `TRIAGED`, `INVESTIGATING`, `PENDING_REVIEW`, `CONTAINED`, `RESOLVED`, `CLOSED` |
 | `severity` | `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
 | `relationship` | `NEW`, `RELATED`, `DUPLICATE` |
-| `proposed_action.type` | `WARN_PERSON`, `ADVISE_DECLINE`, `FLAG_SENDER`, `DRAFT_DISPUTE`, `BLOCK_OPERATOR`, `WITHDRAW` |
+| `proposed_action.type` | `WARN_PERSON`, `ADVISE_DECLINE`, `FLAG_SENDER`, `FILTER_SENDER`, `DRAFT_DISPUTE`, `BLOCK_OPERATOR`, `WITHDRAW` |
 | `action_outcome` | `NONE`, `PROPOSED`, `EXECUTED`, `FAILED`, `HELD_FOR_REVIEW`, `SUPPRESSED_DUPLICATE`, `SUPPRESSED_REPEAT` |
 | `labels.threat` | `BENIGN`, `GREY_MARKET_SUBSCRIPTION`, `IDENTITY_FARMING`, `TECH_SUPPORT_SCAM`, `PRIZE_SCAM`, `IMPERSONATION`, `ADVANCE_FEE`, `JOB_SCAM`, `SALES_OFFER` (an unrequested loan or insurance offer; not a scam, only warned about), `UNKNOWN` |
 | `status` (review) | `PENDING`, `APPROVED`, `REJECTED`, `APPROVED_ACTION_FAILED`, `SUPERSEDED` |
+
+## Scam email in the Bin
+
+Only for email that reached the person's own connected Gmail with `can_bin` true.
+
+1. **The email itself.** When `FLAG_SENDER` runs, that email is moved to the
+   person's Bin straight away, and the warning in `world.outbox` adds "We have
+   moved this email to your Bin". The action's `detail` then contains
+   `email moved to the Bin`. If the move fails, the sender is still marked and
+   the warning says nothing about the Bin.
+2. **A standing filter.** Only when the sender is one exact address whose
+   domain vouched for it (DMARC pass, so the From line was not forged), a
+   follow-up `FILTER_SENDER` is opened as a review for the caregiver:
+
+```json
+{"review_id": "REV-0002", "reason": "High impact action requires approval",
+ "proposed_action": {"type": "FILTER_SENDER", "service": "MAIL_FILTER",
+   "details": {"target": "support@techcare-help.example", "mailbox": "M1a2b3c4d", "ask": "Send every future email from ... straight to the Bin ...?"}},
+ "status": "PENDING", "audience": "CAREGIVER"}
+```
+
+   Approving it creates a Gmail filter that sends that address's later mail to
+   the Bin, and moves their earlier emails there too; the incident becomes
+   `CONTAINED`. The decision that opened it still shows `FLAG_SENDER` as its
+   `proposed_action`; the follow-up appears in `actions` and in `trace` as
+   `Follow-up: FILTER_SENDER → HELD_FOR_REVIEW (...)`.
+3. **Undo.** `WITHDRAW` (the person saying "this is legitimate") takes those
+   emails back out of the Bin and deletes the filter, unless the person had
+   already made the same filter themselves. Gmail empties its Bin after 30 days,
+   so older mail cannot come back.
+
+A whole domain is never filtered, and nothing is ever deleted for good.
 
 ## Disputes
 
@@ -316,7 +348,7 @@ caregiver only ever sees alerts.
 |---|---|---|
 | `GET /me` | anyone signed in | `{user_id, role, person, people, can_add_person, mailbox}`. `people` lists a caregiver's people; `mailbox` is the person's own Gmail state |
 | `POST /people` with `{"name": "...", "relation": "..."}` | caregiver or unlinked user | The same as `GET /me`. An unlinked caller becomes the caregiver |
-| `GET /people/{id}/mailboxes` | caregiver | `[{id, kind, label, status, connected_at, last_checked, last_error, checked}]` |
+| `GET /people/{id}/mailboxes` | caregiver | `[{id, kind, label, status, connected_at, last_checked, last_error, checked, can_bin}]` |
 | `POST /people/{id}/invites` | caregiver | `{token, created_at, expires_at}`. Single use, valid 7 days |
 | `GET /people/{id}/invites` | caregiver | Invites still waiting |
 | `POST /people/{id}/invites/{token}/cancel` | caregiver | `{status: "cancelled"}` |
@@ -333,6 +365,11 @@ caregiver only ever sees alerts.
 | `problem` | The token was refused or revoked, or Gmail has been unreachable for over 15 minutes. `last_error` says why | A problem for the caregiver, with "send a new invite link" |
 | `disconnected` | The person disconnected. Only a new invite reconnects it | A problem for the caregiver |
 
+`can_bin` is `true` when the person allowed Scam Stop to move mail to the Bin
+and keep filters (both scopes below), as of the last scan. When it is `false`
+on a connected Gmail, scanning and warnings still work but nothing is moved:
+show "Send a new invite link so they can allow Scam Stop to bin scam emails".
+
 `checked` counts messages with a verdict. The server keeps nothing else about
 mail judged safe. A flagged email keeps its text until its alert is resolved.
 
@@ -341,10 +378,13 @@ every minute (`SCAN_SECONDS`). A one-time code is withheld, as for every other
 intake. A short outage is retried quietly and only becomes a `problem` after 15
 minutes.
 
-**Setting up Google.** The Clerk application needs Google sign-in with the scope
-`https://www.googleapis.com/auth/gmail.readonly`, using your own Google OAuth
-credentials, because Clerk's shared development credentials cannot add scopes.
-That scope is restricted: until Google verifies the app, it runs in testing
+**Setting up Google.** The Clerk application needs Google sign-in with the scopes
+`https://www.googleapis.com/auth/gmail.readonly` (read),
+`https://www.googleapis.com/auth/gmail.modify` (move mail to the Bin and back) and
+`https://www.googleapis.com/auth/gmail.settings.basic` (filters), using your own
+Google OAuth credentials, because Clerk's shared development credentials cannot
+add scopes. A person who connected before the last two were added must accept a
+new invite to grant them. These scopes are restricted: until Google verifies the app, it runs in testing
 mode, limited to 100 listed test users, and refresh tokens expire after about
 seven days, so a connection needs re-signing weekly (it then shows as a
 `problem`). Verification is a separate step before real users. `GET /health`

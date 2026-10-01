@@ -67,5 +67,6 @@ def extract_signals(text: str, metadata: dict[str, Any]) -> dict[str, Any]:
         "domains": sorted({domain for domain in domains if domain} - bait),
         "phones": sorted({re.sub(r"\D", "", phone) for phone in PHONE_PATTERN.findall(text)}),
         "auth_fail": bool(metadata.get("auth_fail")),
+        "sender_verified": bool(metadata.get("sender_verified")),
         "link_mismatch": any(domain_of(label) and domain_of(label) != domain_of(target) for label, target in links),
     }

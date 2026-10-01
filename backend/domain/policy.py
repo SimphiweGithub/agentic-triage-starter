@@ -14,14 +14,14 @@ ALLOWED_TRANSITIONS: dict[IncidentState, set[IncidentState]] = {
 MIN_AUTOMATION_CONFIDENCE = 0.75
 # No action type moves money, so nothing is forbidden outright; add any such action here.
 FORBIDDEN_ACTIONS: set[ActionType] = set()
-# These act on the person's bank relationship, so the caregiver approves every one.
-HIGH_IMPACT_ACTIONS: set[ActionType] = {ActionType.DRAFT_DISPUTE, ActionType.BLOCK_OPERATOR}
+# These act on the person's bank relationship or set a standing rule on their mailbox, so the caregiver approves every one.
+HIGH_IMPACT_ACTIONS: set[ActionType] = {ActionType.DRAFT_DISPUTE, ActionType.BLOCK_OPERATOR, ActionType.FILTER_SENDER}
 # Reversible and low consequence: may run without a human when confidence is high enough.
 SAFE_ACTIONS: set[ActionType] = {ActionType.RECORD_ONLY, ActionType.WARN_PERSON, ActionType.ADVISE_DECLINE, ActionType.FLAG_SENDER, ActionType.WITHDRAW}
 ALLOWED_SERVICE_ACTIONS: dict[ServiceDomain, set[ActionType]] = {
     ServiceDomain.UNSPECIFIED: {ActionType.RECORD_ONLY},
     ServiceDomain.PERSON: {ActionType.WARN_PERSON, ActionType.ADVISE_DECLINE},
-    ServiceDomain.MAIL_FILTER: {ActionType.FLAG_SENDER},
+    ServiceDomain.MAIL_FILTER: {ActionType.FLAG_SENDER, ActionType.FILTER_SENDER},
     ServiceDomain.BANK: {ActionType.DRAFT_DISPUTE, ActionType.BLOCK_OPERATOR, ActionType.WITHDRAW},
 }
 
@@ -37,7 +37,7 @@ REVIEW_HOLD_SEVERITIES: set[SeverityLevel] = {SeverityLevel.HIGH, SeverityLevel.
 # An action already taken for an incident is not taken again unless listed here.
 REPEATABLE_ACTIONS: set[ActionType] = set()
 # For these actions, a different value of the named detail makes it a different action, not a repeat.
-ACTION_IDENTITY: dict[ActionType, str] = {ActionType.FLAG_SENDER: "target"}
+ACTION_IDENTITY: dict[ActionType, str] = {ActionType.FLAG_SENDER: "target", ActionType.FILTER_SENDER: "target"}
 
 # Correction loop. After a tool fails, the agent may try this many corrected actions before asking a human.
 MAX_CORRECTIONS = 2
@@ -45,6 +45,7 @@ MAX_CORRECTIONS = 2
 STATE_AFTER_APPROVED: dict[ActionType, IncidentState] = {
     ActionType.DRAFT_DISPUTE: IncidentState.CONTAINED,
     ActionType.BLOCK_OPERATOR: IncidentState.CONTAINED,
+    ActionType.FILTER_SENDER: IncidentState.CONTAINED,
     ActionType.WITHDRAW: IncidentState.RESOLVED,
 }
 
