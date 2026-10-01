@@ -3,9 +3,9 @@
 The phone is a **bridge**. Once it is paired and allowed, native Android code
 forwards every new text and chat-app message to the Scam Stop server by itself,
 with the app closed, and shows the warnings the server sends back as phone
-notifications. The caregiver dashboard does the rest. The app's own screen is
-for setting up, and for the two things only the person can do: answer their
-own questions when no family member is enrolled, and see disputes to lodge.
+notifications. The dashboard does everything else, including Gmail. The app's
+own screen only sets the bridge up (pairing code, text access, WhatsApp
+access, server address) and shows whether it is working.
 
 ```
 New SMS ──► SmsReceiver (manifest, woken by Android) ─┐
@@ -24,7 +24,7 @@ WhatsApp ─► NotificationBridge (notification access) ─┼─► Forwarder 
 | First sync of the last week, bridge settings and status, opening Android's notification access screen | `.../SmsInboxPlugin.java` |
 | Registering that plugin | `.../MainActivity.java` |
 | Permissions, the receiver and the listener service | `android/app/src/main/AndroidManifest.xml` |
-| The set-up screen | `src/phone/PhoneApp.tsx` |
+| The set-up and status screen | `src/phone/PhoneApp.tsx` |
 | Phone or browser? | `src/main.tsx` |
 
 One-time PINs, passwords and recovery codes are filtered on the phone before
