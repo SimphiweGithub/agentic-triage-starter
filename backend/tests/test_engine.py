@@ -1312,6 +1312,7 @@ class MarkedScammerTests(unittest.TestCase):
                                                    payload="Hi, did you get my message?", metadata={"sender": "Raven"}))
         self.assertNotEqual(follow_up.labels["threat"], ThreatDomain.BENIGN.value)
         self.assertIn("already marked as a scammer", follow_up.trace[1])
+        self.assertEqual(follow_up.action_outcome, ActionOutcome.EXECUTED)  # warned at once, not held for a human
         stranger = runtime.process(RawInputReport(report_id="W3", source="whatsapp", timestamp="2026-10-01T11:01:00",
                                                   payload="Hi, did you get my message?", metadata={"sender": "Thandi"}))
         self.assertEqual(stranger.labels["threat"], ThreatDomain.BENIGN.value)

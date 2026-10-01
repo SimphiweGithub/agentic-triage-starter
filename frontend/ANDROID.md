@@ -83,8 +83,14 @@ in the app.
 - Notification access is a special permission: Android only lets the person
   switch it on in Settings. On some phones a directly installed app needs
   App info → ⋮ → **Allow restricted settings** first.
-- If the server cannot be reached, messages wait in a queue on the phone and
-  go with the next message.
+- If the server cannot be reached, messages wait in a queue on the phone. The
+  queue is retried with the next message, when the app opens (and every few
+  seconds while it is open), and when the WhatsApp listener reconnects.
+- A repeat of a scam is not acted on twice by the agent, but the phone shows
+  the warning again, because the person has just received it again.
+- On this laptop the Nox emulator starts its own adb, which takes the phone's
+  USB link away. If the phone stops reaching the server, close Nox, restart
+  adb and run `adb reverse tcp:8000 tcp:8000` again.
 - Google Play only allows SMS reading for the default SMS app, so this is
   installed directly, not through the Play Store.
 - The caregiver dashboard with Google sign-in stays in the browser, because

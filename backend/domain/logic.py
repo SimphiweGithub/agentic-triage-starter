@@ -175,7 +175,8 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     evidence = verdict.reasons + [finding.note for finding in findings if finding.weight > 0]
     shared_provider = signals["sender_domain"] in PROTECTED_DOMAINS
     flag_target = signals["sender"] if shared_provider or not signals["sender_domain"] else signals["sender_domain"]
-    if flag_target and flag_target in WORLD.flagged and not trusted:
+    known_scammer = bool(flag_target) and flag_target in WORLD.flagged and not trusted
+    if known_scammer:
         # Already marked as a scammer: even an innocent-looking follow-up is treated as part of the scam.
         risk = max(risk, CONTAIN_THRESHOLD)
         evidence.append("this sender was already marked as a scammer")
@@ -198,6 +199,8 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
                           labels={**labels, "threat": ThreatDomain.BENIGN.value})
 
     confidence = min(0.95, 0.55 + 0.1 * len(evidence))
+    if known_scammer:  # the earlier marking was itself a confident decision, so warn now rather than wait for a human
+        confidence = max(confidence, 0.85)
     rationale = f"Risk {risk:.2f}. " + "; ".join(evidence + list(verdict.notes)) + "."
     conflict = verdict.score >= GATE_THRESHOLD and any(finding.reassuring for finding in findings)
     review_reason = "Evidence conflicts: suspicious wording from an established sender" if conflict else None

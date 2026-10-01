@@ -163,8 +163,10 @@ final class Forwarder {
         List<String> messages = new ArrayList<>();
         for (int index = 0; index < decisions.length(); index++) {
             JSONObject decision = decisions.getJSONObject(index);
-            JSONObject action = decision.optJSONObject("proposed_action");
-            if (action != null && "EXECUTED".equals(decision.optString("action_outcome"))) {
+            String outcome = decision.optString("action_outcome");
+            // A repeat of a scam is not acted on twice, but the person has just received it again, so warn again.
+            JSONObject action = outcome.startsWith("SUPPRESSED") ? decision.optJSONObject("suppressed_action") : decision.optJSONObject("proposed_action");
+            if (action != null && (outcome.equals("EXECUTED") || outcome.startsWith("SUPPRESSED"))) {
                 String message = action.optJSONObject("details") == null ? "" : action.getJSONObject("details").optString("message");
                 if (!message.isEmpty()) {
                     messages.add(message);
