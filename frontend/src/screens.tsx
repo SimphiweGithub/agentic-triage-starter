@@ -313,3 +313,37 @@ export function AddPersonScreen({ onAdded }: { onAdded: () => void }) {
     </Centered>
   )
 }
+
+/**
+ * A caregiver opened an invite link while signed in as themselves. The link is for the person they look after,
+ * who must sign in with their own Google account, so say so instead of quietly showing the dashboard.
+ */
+export function InviteForSomeoneElse({ onBack }: { onBack: () => void }) {
+  const link = window.location.href
+  return (
+    <Centered>
+      <CardHeader>
+        <Brand />
+        <CardTitle className="text-3xl leading-tight font-bold">This link is for the person you look after</CardTitle>
+        <CardDescription className="text-base text-foreground">
+          You are signed in as their caregiver. They connect their own Gmail, so the link must be opened by them, signed in with their Google account.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <ol className="grid list-decimal gap-1 pl-5 text-base">
+          <li>Copy this link.</li>
+          <li>On this computer, open a private window (Ctrl+Shift+N in Chrome or Edge) and paste it there.</li>
+          <li>Choose “Connect my Gmail” and sign in with the Google account to watch.</li>
+        </ol>
+        <div className="flex flex-wrap gap-3">
+          <Button className="h-11 px-5 text-base" onClick={() => navigator.clipboard.writeText(link).then(() => toast.success('Link copied'))}>
+            Copy the link
+          </Button>
+          <Button variant="outline" className="h-11 px-5 text-base" onClick={onBack}>
+            Back to the dashboard
+          </Button>
+        </div>
+      </CardContent>
+    </Centered>
+  )
+}
