@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from api.calls import router as calls_router
+from api.circle import router as circle_router
 from api.mailbox import start_polling
 from api.people import router as people_router
 from api.auth import dev_open
@@ -25,6 +27,8 @@ if origins:
 
 app.include_router(open_router, prefix="/api")      # /api/health
 app.include_router(people_router, prefix="/api")    # /api/me, /api/people, /api/invites
+app.include_router(circle_router, prefix="/api")    # /api/people/{id}/circle
+app.include_router(calls_router, prefix="/api")     # /api/people/{id}/calls
 for each in (person_router, router):
     app.include_router(each, prefix="/api/people/{person_id}")  # everything about one person names them in the address
     if dev_open():  # the plain console cannot name a person, so in development mode the same routes also answer without one

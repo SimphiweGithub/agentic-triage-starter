@@ -34,7 +34,21 @@ CREATE TABLE IF NOT EXISTS scanned (
 CREATE TABLE IF NOT EXISTS phones (
     key_hash TEXT PRIMARY KEY, person_id TEXT NOT NULL, user_id TEXT NOT NULL, created_by TEXT NOT NULL,
     created_at TEXT NOT NULL, revoked_at TEXT);
+CREATE TABLE IF NOT EXISTS calls (
+    person_id TEXT NOT NULL, call_id TEXT NOT NULL, number TEXT NOT NULL, at TEXT NOT NULL, seconds INTEGER NOT NULL,
+    in_contacts INTEGER NOT NULL, contact_name TEXT, tips_shown INTEGER NOT NULL, answer TEXT, answered_at TEXT,
+    PRIMARY KEY (person_id, call_id));
 """
+
+# Columns added after the first release. Each is added to an older database when it is opened.
+#   links.circle_role: next_of_kin, caregiver or helper; empty on an older caregiver link means next of kin.
+#   invites.role: empty for the link a protected person opens to connect Gmail; a circle role for joining the circle.
+MIGRATIONS = {
+    "links": {"circle_role": "TEXT", "name": "TEXT NOT NULL DEFAULT ''", "joined_at": "TEXT"},
+    "invites": {"role": "TEXT", "name": "TEXT NOT NULL DEFAULT ''"},
+}
+CIRCLE_ROLES = ("next_of_kin", "caregiver", "helper")
+CALLS_KEPT = 200  # the newest calls listed per person
 
 
 def now() -> datetime:
@@ -52,6 +66,15 @@ class Store:
         self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        for table, columns in MIGRATIONS.items():
+            have = {row["name"] for row in self.db.execute(f"PRAGMA table_info({table})")}
+            for column, kind in columns.items():
+                if column not in have:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+        self.db.commit()
 
     def close(self) -> None:
         self.db.close()
@@ -59,7 +82,7 @@ class Store:
     def reset(self) -> None:
         """Empty every table. For tests."""
         with self.lock:
-            for table in ("people", "links", "invites", "mailboxes", "scanned", "phones"):
+            for table in ("people", "links", "invites", "mailboxes", "scanned", "phones", "calls"):
                 self.db.execute(f"DELETE FROM {table}")
             self.db.commit()
 
@@ -85,7 +108,8 @@ class Store:
         with self.lock:
             person_id = f"P{secrets.token_hex(4)}"
             self.db.execute("INSERT INTO people VALUES (?, ?, ?, ?)", (person_id, name.strip(), relation.strip(), stamp(now())))
-            self.db.execute("INSERT INTO links VALUES (?, ?, 'caregiver')", (person_id, caregiver_id))
+            self.db.execute("INSERT INTO links (person_id, user_id, role, circle_role, joined_at) VALUES (?, ?, 'caregiver', 'next_of_kin', ?)",
+                            (person_id, caregiver_id, stamp(now())))
             self.db.commit()
             return self.person(person_id)
 
@@ -119,10 +143,12 @@ class Store:
         with self.lock:
             return self._one("SELECT * FROM invites WHERE token = ?", (token,))
 
-    def pending_invites(self, person_id: str) -> list[dict]:
+    def pending_invites(self, person_id: str, circle: bool = False) -> list[dict]:
+        """Usable invites: the Gmail links for the protected person, or with `circle` the invites to join the circle."""
         with self.lock:
-            return [item for item in self._all("SELECT * FROM invites WHERE person_id = ? AND accepted_at IS NULL AND cancelled_at IS NULL ORDER BY created_at DESC", (person_id,))
-                    if not invite_problem(item)]
+            kind = "role IS NOT NULL" if circle else "role IS NULL"
+            sql = f"SELECT * FROM invites WHERE person_id = ? AND {kind} AND accepted_at IS NULL AND cancelled_at IS NULL ORDER BY created_at DESC"
+            return [item for item in self._all(sql, (person_id,)) if not invite_problem(item)]
 
     def cancel_invite(self, person_id: str, token: str) -> bool:
         with self.lock:
@@ -142,7 +168,7 @@ class Store:
             self.db.execute("UPDATE invites SET accepted_at = ? WHERE token = ?", (stamp(now()), token))
             self.db.execute("DELETE FROM links WHERE person_id = ? AND role = 'person' AND user_id != ? AND user_id NOT LIKE 'phone:%'",
                             (person_id, user_id))  # a paired phone stays paired when the person connects Gmail
-            self.db.execute("INSERT OR REPLACE INTO links VALUES (?, ?, 'person')", (person_id, user_id))
+            self.db.execute("INSERT OR REPLACE INTO links (person_id, user_id, role) VALUES (?, ?, 'person')", (person_id, user_id))
             self.db.execute("DELETE FROM scanned WHERE mailbox_id IN (SELECT id FROM mailboxes WHERE person_id = ? AND kind = 'gmail')", (person_id,))
             self.db.execute("DELETE FROM mailboxes WHERE person_id = ? AND kind = 'gmail'", (person_id,))  # one Gmail per person for now
             mailbox_id = f"M{secrets.token_hex(4)}"
@@ -150,6 +176,86 @@ class Store:
                             (mailbox_id, person_id, user_id, stamp(now())))
             self.db.commit()
             return self.mailbox(mailbox_id)
+
+    # ---- the care circle ----
+
+    def create_circle_invite(self, person_id: str, created_by: str, name: str, role: str) -> dict:
+        """A single-use link to join the person's circle in `role`. It expires like the Gmail invite."""
+        if role not in CIRCLE_ROLES:
+            raise ValueError(f"Unknown role {role}")
+        with self.lock:
+            token = secrets.token_urlsafe(24)
+            created = now()
+            self.db.execute("INSERT INTO invites (token, person_id, created_by, created_at, expires_at, role, name) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (token, person_id, created_by, stamp(created), stamp(created + timedelta(days=INVITE_DAYS)), role, name.strip()))
+            self.db.commit()
+            return self.invite(token)
+
+    def accept_circle_invite(self, token: str, user_id: str) -> None:
+        """Link the user to the person in the invite's role. A helper's link gives no access to alerts, so it says helper."""
+        with self.lock:
+            invite = self.invite(token)
+            problem = invite_problem(invite)
+            if problem:
+                raise ValueError(problem)
+            if invite["role"] == "next_of_kin" and self.next_of_kin(invite["person_id"]):
+                raise ValueError("Someone is already the next of kin. Ask them to send a new link.")
+            access = "helper" if invite["role"] == "helper" else "caregiver"
+            self.db.execute("UPDATE invites SET accepted_at = ? WHERE token = ?", (stamp(now()), token))
+            self.db.execute("INSERT INTO links (person_id, user_id, role, circle_role, name, joined_at) VALUES (?, ?, ?, ?, ?, ?)",
+                            (invite["person_id"], user_id, access, invite["role"], invite["name"], stamp(now())))
+            self.db.commit()
+
+    def circle(self, person_id: str) -> list[dict]:
+        """Everyone linked to the person except the person themselves and their phone, oldest first."""
+        with self.lock:
+            rows = self._all("SELECT * FROM links WHERE person_id = ? AND role != 'person' ORDER BY rowid", (person_id,))
+            return [{**row, "circle_role": row["circle_role"] or "next_of_kin"} for row in rows]
+
+    def circle_role(self, person_id: str, user_id: str) -> str | None:
+        """The user's role in the person's circle: protected, next_of_kin, caregiver, helper, or None if not linked."""
+        with self.lock:
+            row = self._one("SELECT role, circle_role FROM links WHERE person_id = ? AND user_id = ?", (person_id, user_id))
+            if row is None:
+                return None
+            return "protected" if row["role"] == "person" else row["circle_role"] or "next_of_kin"
+
+    def next_of_kin(self, person_id: str) -> str | None:
+        """The user id of the person's next of kin, if there is one."""
+        return next((row["user_id"] for row in self.circle(person_id) if row["circle_role"] == "next_of_kin"), None)
+
+    def remove_from_circle(self, person_id: str, user_id: str) -> bool:
+        with self.lock:
+            cursor = self.db.execute("DELETE FROM links WHERE person_id = ? AND user_id = ? AND role != 'person'", (person_id, user_id))
+            self.db.commit()
+            return cursor.rowcount > 0
+
+    # ---- phone calls (who, when and how long, never what was said) ----
+
+    def record_call(self, person_id: str, call: dict) -> dict:
+        """Keep a call the phone reported. The same call reported twice is kept once."""
+        with self.lock:
+            self.db.execute("INSERT OR IGNORE INTO calls (person_id, call_id, number, at, seconds, in_contacts, contact_name, tips_shown) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            (person_id, call["call_id"], call["number"], call["at"], call["seconds"], int(call["in_contacts"]), call.get("contact_name"), int(call["tips_shown"])))
+            self.db.commit()
+            return self.call(person_id, call["call_id"])
+
+    def call(self, person_id: str, call_id: str) -> dict | None:
+        with self.lock:
+            row = self._one("SELECT * FROM calls WHERE person_id = ? AND call_id = ?", (person_id, call_id))
+            return _call(row) if row else None
+
+    def calls(self, person_id: str) -> list[dict]:
+        with self.lock:
+            return [_call(row) for row in self._all("SELECT * FROM calls WHERE person_id = ? ORDER BY at DESC LIMIT ?", (person_id, CALLS_KEPT))]
+
+    def answer_call(self, person_id: str, call_id: str, answer: str) -> dict | None:
+        """What the person tapped after the call. A later answer replaces an earlier one."""
+        with self.lock:
+            cursor = self.db.execute("UPDATE calls SET answer = ?, answered_at = ? WHERE person_id = ? AND call_id = ?",
+                                     (answer, stamp(now()), person_id, call_id))
+            self.db.commit()
+            return self.call(person_id, call_id) if cursor.rowcount else None
 
     # ---- mailboxes ----
 
@@ -208,7 +314,7 @@ class Store:
                 self.db.execute("DELETE FROM links WHERE user_id = ?", (row["user_id"],))
             self.db.execute("UPDATE phones SET revoked_at = ? WHERE person_id = ? AND revoked_at IS NULL", (stamp(now()), person_id))
             self.db.execute("INSERT INTO phones VALUES (?, ?, ?, ?, ?, NULL)", (_hash(code), person_id, user_id, created_by, stamp(now())))
-            self.db.execute("INSERT INTO links VALUES (?, ?, 'person')", (person_id, user_id))
+            self.db.execute("INSERT INTO links (person_id, user_id, role) VALUES (?, ?, 'person')", (person_id, user_id))
             self.db.commit()
             return code
 
@@ -234,6 +340,11 @@ class Store:
         with self.lock:
             self.db.execute("INSERT OR IGNORE INTO scanned VALUES (?, ?, ?, ?)", (mailbox_id, message_id, verdict, stamp(now())))
             self.db.commit()
+
+
+def _call(row: dict) -> dict:
+    return {"call_id": row["call_id"], "number": row["number"], "at": row["at"], "seconds": row["seconds"], "in_contacts": bool(row["in_contacts"]),
+            "contact_name": row["contact_name"], "tips_shown": bool(row["tips_shown"]), "answer": row["answer"]}
 
 
 def _hash(code: str) -> str:

@@ -14,6 +14,8 @@ export type CircleMember = {
   status: string
   /** The signed-in user. */
   you?: boolean
+  /** An invite that has not been accepted yet. */
+  pending?: boolean
 }
 
 export const ROLE: Record<CircleRole, { label: string; summary: string; chip: string; avatar: string }> = {
@@ -37,7 +39,7 @@ export const ROLE: Record<CircleRole, { label: string; summary: string; chip: st
   },
   helper: {
     label: 'Trusted helper',
-    summary: 'A neighbour or friend. Pinged only for urgent calls, never sees message text.',
+    summary: 'A neighbour or friend the family can call on. Never sees messages or calls.',
     chip: 'bg-helper-soft text-helper',
     avatar: 'bg-helper text-background',
   },
@@ -46,14 +48,13 @@ export const ROLE: Record<CircleRole, { label: string; summary: string; chip: st
 /** Roles that can be given by invite, most trusted first. */
 export const INVITE_ROLES: CircleRole[] = ['next_of_kin', 'caregiver', 'helper']
 
-type Access = 'yes' | 'no' | 'own' | 'suggest' | 'urgent' | 'no-kin' | 'remove'
+type Access = 'yes' | 'no' | 'own' | 'suggest' | 'no-kin' | 'remove'
 
 export const ACCESS_WORD: Record<Access, string> = {
   yes: 'Yes',
   no: '—',
   own: 'Own',
   suggest: 'Suggest',
-  urgent: 'Urgent only',
   'no-kin': 'If no kin',
   remove: 'Remove',
 }
@@ -63,7 +64,7 @@ export const PERMISSIONS: { label: string; access: Record<CircleRole, Access> }[
   { label: 'See warnings about their messages', access: { protected: 'own', next_of_kin: 'yes', caregiver: 'yes', helper: 'no' } },
   { label: 'Read the full message text', access: { protected: 'own', next_of_kin: 'yes', caregiver: 'yes', helper: 'no' } },
   { label: 'See call activity (number, time, length)', access: { protected: 'own', next_of_kin: 'yes', caregiver: 'yes', helper: 'no' } },
-  { label: 'Get pinged about a risky call', access: { protected: 'no', next_of_kin: 'yes', caregiver: 'yes', helper: 'urgent' } },
+  { label: 'Get told about a risky call', access: { protected: 'no', next_of_kin: 'yes', caregiver: 'yes', helper: 'no' } },
   { label: 'Approve a dispute or debit block', access: { protected: 'no-kin', next_of_kin: 'yes', caregiver: 'suggest', helper: 'no' } },
   { label: 'Mark a company as trusted', access: { protected: 'yes', next_of_kin: 'yes', caregiver: 'suggest', helper: 'no' } },
   { label: 'Pair and manage devices', access: { protected: 'no', next_of_kin: 'yes', caregiver: 'yes', helper: 'no' } },

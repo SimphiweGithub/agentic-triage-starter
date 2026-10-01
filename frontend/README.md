@@ -30,14 +30,7 @@ npm.cmd run lint
 
 ## Calls and the care circle
 
-The Calls and Care circle tabs and the phone's call alerts expect these routes, which the backend does not serve yet. Until it does, the screens say the call monitor is not on and show only the person and you in the circle.
-
-| Route | Returns or takes |
-|---|---|
-| `GET /people/{id}/calls` | `[{call_id, number, at, seconds, in_contacts, contact_name, tips_shown, answer}]`; `answer` is `known`, `asked_code`, `told_kin` or `null` |
-| `POST /people/{id}/calls/{call_id}/answer` | `{answer}`, sent by the paired phone with `X-Device-Key` |
-| `GET /people/{id}/circle` | `[{id, name, relation, role, status, you}]`; `role` is `protected`, `next_of_kin`, `caregiver` or `helper` |
-| `POST /people/{id}/circle/invites` | `{name, role}` → `{token, role, name, expires_at}` |
+The Calls and Care circle tabs use the backend's calls and circle routes; see "Care circle" and "Calls" in the [API contract](../backend/API.md). A circle invite is opened like the Gmail invite, at `/?invite=<token>`, and a trusted helper who signs in sees only a short thank-you screen.
 
 The phone app also expects a native `CallMonitor` Capacitor plugin (`src/phone/call-monitor.ts` describes it): it sees only that a call happened, the number, its length and whether it is a contact, reports unknown calls to the server, and opens the app on the call scams screen from its notification.
 

@@ -1,3 +1,5 @@
+import type { CircleRole } from './circle'
+
 // Shapes returned by the Scam Stop backend. See backend/API.md.
 
 export type IncidentState =
@@ -137,7 +139,8 @@ export type Health = {
   guardian: boolean
 }
 
-export type Role = 'caregiver' | 'person'
+/** How the signed-in user uses Scam Stop: the dashboard, the protected person's own view, or a helper's. */
+export type Role = 'caregiver' | 'person' | 'helper'
 
 export type MailboxStatus = 'connected' | 'problem' | 'disconnected'
 
@@ -170,7 +173,8 @@ export type Me = {
 
 export type Invite = { token: string; created_at: string; expires_at: string }
 
-export type InviteLook = { valid: boolean; problem: string | null; person_name: string | null }
+/** `role` is empty for the link a protected person opens to connect Gmail, and a circle role for joining the circle. */
+export type InviteLook = { valid: boolean; problem: string | null; person_name: string | null; role: CircleRole | null; invitee_name: string | null }
 
 /** For the switcher: how many decisions wait for one person, and how many of their mailboxes are in trouble. */
 export type PersonSummary = PersonRecord & { needs: number; problems: number }

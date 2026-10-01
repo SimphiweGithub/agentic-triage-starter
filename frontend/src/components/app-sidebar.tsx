@@ -153,14 +153,14 @@ export function AppSidebar({ tab, onTab, alertsWaiting, callsWaiting, circle, yo
 
 /** The other people in the active person's circle, as overlapping initials. */
 function CircleFaces({ circle }: { circle: CircleMember[] }) {
-  const others = circle.filter((member) => member.role !== 'protected')
+  const others = circle.filter((member) => member.role !== 'protected' && !member.pending)
   if (others.length === 0) return null
   return (
     <div className="flex items-center gap-2 px-2 pt-1 pb-2 text-xs text-muted-foreground">
       <span className="flex">
         {others.slice(0, 4).map((member, index) => (
-          <span key={member.id} title={`${member.you ? 'You' : member.name} · ${ROLE[member.role].label}`} className={cn('grid size-6 place-items-center rounded-full border-2 border-sidebar text-[11px] font-bold', ROLE[member.role].avatar, index > 0 && '-ml-2')}>
-            {member.you ? 'Y' : initial(member.name)}
+          <span key={member.id} title={`${member.you ? 'You' : member.name || ROLE[member.role].label} · ${ROLE[member.role].label}`} className={cn('grid size-6 place-items-center rounded-full border-2 border-sidebar text-[11px] font-bold', ROLE[member.role].avatar, index > 0 && '-ml-2')}>
+            {member.you ? 'Y' : initial(member.name || ROLE[member.role].label)}
           </span>
         ))}
       </span>

@@ -119,16 +119,22 @@ def look_at_invite(token: str):
     invite = store.invite(token)
     problem = invite_problem(invite)
     person = store.person(invite["person_id"]) if invite else None
-    return {"valid": problem is None, "problem": problem, "person_name": person["name"] if person and problem is None else None}
+    ok = problem is None
+    return {"valid": ok, "problem": problem, "person_name": person["name"] if person and ok else None,
+            "role": invite["role"] if invite and ok else None,          # empty: the person connects Gmail; else the circle role offered
+            "invitee_name": invite["name"] if invite and ok and invite["role"] else None}
 
 
 @router.post("/invites/{token}/accept")
 def accept_invite(token: str, user_id: str = Depends(who)):
-    """The person signed in with Google from the link. Check Gmail works, then link them and start watching."""
+    """The person signed in with Google from the link. Check Gmail works, then link them and start watching.
+    A circle invite instead links the signed-in user to the person in the role it offers."""
     store = get_store()
     problem = invite_problem(store.invite(token))
     if problem:
         raise HTTPException(410, problem)
+    if store.invite(token)["role"]:
+        return _join_circle(token, user_id, store)
     links = store.links_of(user_id)
     invited_person = store.invite(token)["person_id"]
     if links and (len(links) != 1 or links[0] != {"person_id": invited_person, "role": "person"}):
@@ -141,6 +147,24 @@ def accept_invite(token: str, user_id: str = Depends(who)):
         raise HTTPException(410, str(error)) from error
     set_clerk_role(user_id, "person")
     return _me(caller(user_id), store)
+
+
+def _join_circle(token: str, user_id: str, store: Store) -> dict:
+    invite = store.invite(token)
+    links = store.links_of(user_id)
+    before = caller(user_id).role
+    if any(item["role"] == "person" for item in links):
+        raise HTTPException(409, "This account belongs to someone who is looked after")
+    if any(item["person_id"] == invite["person_id"] for item in links):
+        raise HTTPException(409, "You are already in this circle")
+    try:
+        store.accept_circle_invite(token, user_id)
+    except ValueError as error:
+        raise HTTPException(410, str(error)) from error
+    after = caller(user_id)
+    if after.role != before:
+        set_clerk_role(user_id, after.role)  # a helper who is now also a caregiver somewhere uses the dashboard
+    return _me(after, store)
 
 
 @router.post("/me/disconnect")

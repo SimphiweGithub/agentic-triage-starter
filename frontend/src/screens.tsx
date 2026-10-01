@@ -1,12 +1,12 @@
-import { SignInButton, SignUpButton, UserButton } from './auth'
+import { SignInButton, UserButton } from './auth'
 import { MailCheck, ShieldCheck } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { api, post } from './api'
-import { AddPersonForm } from './components/add-person-form'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
+import { ROLE } from './circle'
 import { formatTime, reviewQuestion } from './format'
 import type { InviteLook, Me, Review } from './types'
 
@@ -26,30 +26,6 @@ function Brand() {
   )
 }
 
-export function SignedOutScreen() {
-  return (
-    <Centered>
-      <CardHeader>
-        <Brand />
-        <CardTitle className="text-3xl leading-tight font-bold">Watch over the people you look after</CardTitle>
-        <CardDescription className="text-base">
-          Scam messages, predatory debit orders and creeping subscriptions are caught and explained. Anything that touches the bank waits for you.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-wrap gap-3">
-        <SignInButton>
-          <Button className="h-11 px-6 text-base">Sign in</Button>
-        </SignInButton>
-        <SignUpButton>
-          <Button variant="outline" className="h-11 px-6 text-base">
-            Create an account
-          </Button>
-        </SignUpButton>
-      </CardContent>
-    </Centered>
-  )
-}
-
 /**
  * Where the person lands from an invite link. Signed out, they are asked to sign in with Google;
  * signed in, one button links their Gmail. The wording is plain on purpose.
@@ -62,7 +38,7 @@ export function ConnectScreen({ token, signedIn, onDone }: { token: string; sign
     let live = true
     api<InviteLook>(`/invites/${token}`)
       .then((found) => live && setLook(found))
-      .catch(() => live && setLook({ valid: false, problem: 'This link could not be checked. Try again in a moment.', person_name: null }))
+      .catch(() => live && setLook({ valid: false, problem: 'This link could not be checked. Try again in a moment.', person_name: null, role: null, invitee_name: null }))
     return () => {
       live = false
     }
@@ -72,7 +48,7 @@ export function ConnectScreen({ token, signedIn, onDone }: { token: string; sign
     setBusy(true)
     try {
       await post(`/invites/${token}/accept`)
-      toast.success('Your Gmail is connected. Thank you.')
+      toast.success(look?.role ? `You are now in ${look.person_name}’s care circle.` : 'Your Gmail is connected. Thank you.')
       onDone()
     } catch (caught) {
       toast.error(caught instanceof Error ? caught.message : 'Could not connect. Try again.')
@@ -91,6 +67,36 @@ export function ConnectScreen({ token, signedIn, onDone }: { token: string; sign
           <CardTitle className="text-2xl font-bold">This link can’t be used</CardTitle>
           <CardDescription className="text-base">{look.problem}</CardDescription>
         </CardHeader>
+      </Centered>
+    )
+  }
+
+  if (look.role) {
+    const role = ROLE[look.role]
+    return (
+      <Centered>
+        <CardHeader>
+          <Brand />
+          <CardTitle className="text-3xl leading-tight font-bold">
+            {look.invitee_name ? `Hello ${look.invitee_name}` : 'Hello'}
+          </CardTitle>
+          <CardDescription className="text-base text-foreground">
+            You are invited to help keep {look.person_name} safe from scams, as their {role.label.toLowerCase()}.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5">
+          <p className="text-base">{role.summary}</p>
+          {signedIn ? (
+            <Button className="h-12 w-full text-lg" disabled={busy} onClick={connect}>
+              {busy ? 'Joining…' : `Join ${look.person_name}’s circle`}
+            </Button>
+          ) : (
+            <SignInButton forceRedirectUrl={window.location.href} signUpForceRedirectUrl={window.location.href}>
+              <Button className="h-12 w-full text-lg">Sign in to join</Button>
+            </SignInButton>
+          )}
+          <p className="text-sm text-muted-foreground">The link works once and lasts a week.</p>
+        </CardContent>
       </Centered>
     )
   }
@@ -296,7 +302,8 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
   )
 }
 
-export function AddPersonScreen({ onAdded }: { onAdded: () => void }) {
+/** A trusted helper sees whose circle they are in and what that means. Alerts and calls stay with the family. */
+export function HelperHome({ me }: { me: Me }) {
   return (
     <Centered>
       <CardHeader>
@@ -304,11 +311,14 @@ export function AddPersonScreen({ onAdded }: { onAdded: () => void }) {
           <Brand />
           <UserButton />
         </div>
-        <CardTitle className="text-3xl leading-tight font-bold">Who are you looking after?</CardTitle>
-        <CardDescription className="text-base">You will then be able to invite them to connect their own Gmail. You never need their password. You can add more people later.</CardDescription>
+        <span className="w-fit rounded-full bg-helper-soft px-3 py-0.5 text-sm font-bold text-helper">{ROLE.helper.label}</span>
+        <CardTitle className="text-3xl leading-tight font-bold">Thank you for helping</CardTitle>
+        <CardDescription className="text-base text-foreground">
+          You are a trusted helper for {me.people.map((person) => person.name).join(', ') || 'someone'}. {ROLE.helper.summary}
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <AddPersonForm onAdded={onAdded} />
+        <p className="text-muted-foreground">There is nothing to do here. Their family may ask you to check on them in person.</p>
       </CardContent>
     </Centered>
   )

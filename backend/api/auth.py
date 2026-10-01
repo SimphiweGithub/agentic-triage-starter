@@ -1,6 +1,6 @@
 """Who is calling. Clerk proves who the user is; the store says which person they are linked to and in what role."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from clerk_backend_api import Clerk
 from clerk_backend_api.security import authenticate_request
@@ -13,8 +13,9 @@ from api.store import get_store
 @dataclass
 class Caller:
     user_id: str
-    role: str | None            # "caregiver", "person", or None before they are linked to anyone
+    role: str | None            # "caregiver", "person", "helper", or None before they are linked to anyone
     person_ids: list[str]       # a caregiver may look after several people; a protected person has one
+    links: dict[str, str] = field(default_factory=dict)  # person id -> how this user is linked to them
 
     @property
     def person_id(self) -> str | None:
@@ -48,7 +49,10 @@ def who(request: Request) -> str:
 
 def caller(user_id: str = Depends(who)) -> Caller:
     links = get_store().links_of(user_id)
-    return Caller(user_id, links[0]["role"] if links else None, [item["person_id"] for item in links])
+    roles = [item["role"] for item in links]
+    # Someone who looks after anyone uses the dashboard. A helper only sees the circle of the people they help.
+    role = next((each for each in ("caregiver", "person", "helper") if each in roles), None)
+    return Caller(user_id, role, [item["person_id"] for item in links], {item["person_id"]: item["role"] for item in links})
 
 
 def caregiver(me: Caller = Depends(caller)) -> Caller:
@@ -65,21 +69,26 @@ def member(me: Caller = Depends(caller)) -> Caller:
     raise HTTPException(403, "Add the person you look after first.")
 
 
-def _may_see(me: Caller, person_id: str) -> bool:
-    """Linked to this person, or in development mode with nobody linked (the plain console)."""
-    return person_id in me.person_ids or (dev_open() and me.role is None and get_store().person(person_id) is not None)
+CAREGIVER_LINKS = ("caregiver",)
+MEMBER_LINKS = ("caregiver", "person")
+CIRCLE_LINKS = ("caregiver", "person", "helper")
+
+
+def _may_see(me: Caller, person_id: str, links: tuple[str, ...]) -> bool:
+    """Linked to this person in one of `links`, or in development mode with nobody linked (the plain console)."""
+    return me.links.get(person_id) in links or (dev_open() and me.role is None and get_store().person(person_id) is not None)
 
 
 def caregiver_of(person_id: str, me: Caller = Depends(caregiver)) -> Caller:
     """The caregiver of this particular person. Someone else's person looks like it does not exist."""
-    if not _may_see(me, person_id):
+    if not _may_see(me, person_id, CAREGIVER_LINKS):
         raise HTTPException(404, "Person not found")
     return me
 
 
 def member_of(person_id: str, me: Caller = Depends(member)) -> Caller:
     """This person's caregiver, or the person themselves."""
-    if not _may_see(me, person_id):
+    if not _may_see(me, person_id, MEMBER_LINKS):
         raise HTTPException(404, "Person not found")
     return me
 
@@ -90,7 +99,7 @@ def active_caregiver_person(person_id: str | None = None, me: Caller = Depends(c
         if dev_open() and me.role is None:
             return None
         raise HTTPException(404, "Name the person in the address: /api/people/{id}/...")
-    if not _may_see(me, person_id):
+    if not _may_see(me, person_id, CAREGIVER_LINKS):
         raise HTTPException(404, "Person not found")
     return person_id
 
@@ -101,9 +110,23 @@ def active_member_person(person_id: str | None = None, me: Caller = Depends(memb
         if dev_open() and me.role is None:
             return None
         raise HTTPException(404, "Name the person in the address: /api/people/{id}/...")
-    if not _may_see(me, person_id):
+    if not _may_see(me, person_id, MEMBER_LINKS):
         raise HTTPException(404, "Person not found")
     return person_id
+
+
+def circle_member_of(person_id: str, me: Caller = Depends(member)) -> Caller:
+    """Anyone in this person's circle, helpers included, or the person themselves."""
+    if not _may_see(me, person_id, CIRCLE_LINKS):
+        raise HTTPException(404, "Person not found")
+    return me
+
+
+def next_of_kin_of(person_id: str, me: Caller = Depends(caregiver_of)) -> Caller:
+    """The person's next of kin: the one who approves money decisions and decides who is in the circle."""
+    if not dev_open() and get_store().circle_role(person_id, me.user_id) != "next_of_kin":
+        raise HTTPException(403, "Only the next of kin can do this")
+    return me
 
 
 def set_clerk_role(user_id: str, role: str) -> None:

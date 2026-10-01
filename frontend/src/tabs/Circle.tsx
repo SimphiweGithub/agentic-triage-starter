@@ -23,8 +23,22 @@ type Props = {
 const ROLE_ORDER: CircleRole[] = ['protected', 'next_of_kin', 'caregiver', 'helper']
 
 export function Circle({ personId, members, listed, you, guardian, onChanged }: Props) {
-  const sorted = [...members].sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role))
+  const sorted = [...members].sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || Number(Boolean(a.pending)) - Number(Boolean(b.pending)))
   const mayInvite = canApprove(you?.role)
+  const [removing, setRemoving] = useState<string | null>(null)
+
+  async function remove(member: CircleMember) {
+    setRemoving(member.id)
+    try {
+      await post(`/people/${personId}/circle/${member.id}/remove`)
+      toast(`${member.name || 'They'} left ${PERSON.name}’s circle.`)
+      onChanged()
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Could not remove them. Try again.')
+    } finally {
+      setRemoving(null)
+    }
+  }
 
   return (
     <>
@@ -43,15 +57,20 @@ export function Circle({ personId, members, listed, you, guardian, onChanged }: 
         {sorted.map((member) => (
           <li key={member.id} className={cn('grid content-start gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10', member.role === 'protected' && 'ring-2 ring-primary')}>
             <div className="flex items-center gap-3">
-              <span className={cn('grid size-12 shrink-0 place-items-center rounded-full text-lg font-bold', ROLE[member.role].avatar)}>{initial(member.name)}</span>
+              <span className={cn('grid size-12 shrink-0 place-items-center rounded-full text-lg font-bold', ROLE[member.role].avatar)}>{initial(member.name || ROLE[member.role].label)}</span>
               <span className="grid min-w-0">
-                <strong className="truncate text-lg">{member.you ? 'You' : member.name}</strong>
+                <strong className="truncate text-lg">{member.you ? 'You' : member.name || ROLE[member.role].label}</strong>
                 {member.relation && <span className="text-sm text-muted-foreground">{member.relation}</span>}
               </span>
             </div>
             <RoleChip role={member.role} />
             <p className="text-base text-muted-foreground">{ROLE[member.role].summary}</p>
             <span className="text-sm text-muted-foreground">{member.status}</span>
+            {mayInvite && !member.you && !member.pending && (member.role === 'caregiver' || member.role === 'helper') && (
+              <Button variant="ghost" className="h-10 w-fit px-3 text-destructive" disabled={removing === member.id} onClick={() => remove(member)}>
+                Remove from the circle
+              </Button>
+            )}
           </li>
         ))}
       </ul>
@@ -122,7 +141,7 @@ const INVITE_NOTE: Record<CircleRole, string> = {
   protected: '',
   next_of_kin: 'Approves bank actions. One per person.',
   caregiver: 'Sees alerts and calls, checks in, cannot approve money.',
-  helper: 'A neighbour or friend. Urgent pings only, never message text.',
+  helper: 'A neighbour or friend. Sees only who is in the circle.',
 }
 
 function InviteForm({ personId, onChanged }: { personId: string; onChanged: () => void }) {
@@ -190,7 +209,7 @@ function InviteForm({ personId, onChanged }: { personId: string; onChanged: () =
           </Button>
         </div>
       )}
-      <p className="text-sm text-muted-foreground">{PERSON.name} is told whenever someone joins or changes role.</p>
+      <p className="text-sm text-muted-foreground">{PERSON.name} sees everyone in the circle and can remove anyone but the next of kin.</p>
     </form>
   )
 }

@@ -26,7 +26,8 @@ import { Circle } from './tabs/Circle'
 import { Devices } from './tabs/Devices'
 import { Money } from './tabs/Money'
 import { Today } from './tabs/Today'
-import { AddPersonScreen, ConnectScreen, PersonHome, SignedOutScreen } from './screens'
+import { ConnectScreen, HelperHome, PersonHome } from './screens'
+import { RoleStart, StartScreen } from './start'
 import { usePeopleSummary } from './people'
 import { AddPersonForm } from './components/add-person-form'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog'
@@ -44,7 +45,7 @@ function App() {
       <ClerkLoading>
         <p className="my-16 text-center text-muted-foreground">Loading Scam Stop…</p>
       </ClerkLoading>
-      <Show when="signed-out">{invite ? <ConnectScreen token={invite} signedIn={false} onDone={() => undefined} /> : <SignedOutScreen />}</Show>
+      <Show when="signed-out">{invite ? <ConnectScreen token={invite} signedIn={false} onDone={() => undefined} /> : <StartScreen />}</Show>
       <Show when="signed-in">
         <Authed />
       </Show>
@@ -66,7 +67,7 @@ function Authed() {
     if (invite) clearInviteFromAddress()
     return <PersonHome me={me} onChanged={refresh} />
   }
-  if (me.role === null && invite) {
+  if (invite) {
     return (
       <ConnectScreen
         token={invite}
@@ -79,7 +80,8 @@ function Authed() {
     )
   }
   if (me.role === 'caregiver' && me.people.length > 0) return <Workspace me={me} onMeChanged={refresh} />
-  return <AddPersonScreen onAdded={refresh} />
+  if (me.role === 'helper') return <HelperHome me={me} />
+  return <RoleStart onAdded={refresh} />
 }
 
 const CHOSEN_KEY = 'kinguard.person'

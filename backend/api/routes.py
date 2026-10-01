@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from api.auth import Caller, active_caregiver_person, active_member_person, dev_open, member
 from api.pool import default_runtime, runtime_for
+from api.store import get_store
 from core.ingest import kept, read_text_records, safe_parse
 from core.runtime import TriageRuntime
 from domain.briefs import guardian_brief
@@ -212,12 +213,16 @@ def person_state(rt: TriageRuntime = Depends(member_runtime)):
 
 
 @person_router.post("/reviews/{review_id}/decision", tags=["person"], response_model=ReviewItem)
-def decide(review_id: str, decision: ReviewDecision, rt: TriageRuntime = Depends(member_runtime), me: Caller = Depends(member)):
-    """Approve or reject. An approved action runs now; a rejected one never runs. 409 during a cooling-off period."""
+def decide(review_id: str, decision: ReviewDecision, rt: TriageRuntime = Depends(member_runtime), me: Caller = Depends(member),
+           person_id: str | None = Depends(active_member_person)):
+    """Approve or reject. An approved action runs now; a rejected one never runs. 409 during a cooling-off period.
+    A caregiver's decision is the next of kin's to make: other caregivers may look, not answer."""
     try:
         review = rt.reviews[review_id]
-        if not dev_open() and review.audience != ("PERSON" if me.role == "person" else "CAREGIVER"):
+        if not dev_open() and review.audience != ("PERSON" if me.links.get(person_id) == "person" else "CAREGIVER"):
             raise HTTPException(403, "This decision is addressed to someone else")
+        if not dev_open() and review.audience == "CAREGIVER" and get_store().circle_role(person_id, me.user_id) != "next_of_kin":
+            raise HTTPException(403, "Only the next of kin can answer this")
         return rt.decide_review(review_id, decision.approved)
     except KeyError as error:
         raise HTTPException(404, "Review not found") from error

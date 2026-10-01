@@ -285,13 +285,14 @@ mailbox and the models are switched on.
 ## Signing in and roles
 
 The front end signs users in with Clerk and sends the session token on every
-call. There are two roles, stored on the server and on the Clerk user's public
+call. There are three roles, stored on the server and on the Clerk user's public
 metadata (`role`):
 
 | Role | Who | What they may call |
 |---|---|---|
-| `caregiver` | The person who looks after someone | Routes scoped to every person they look after, including caregiver reviews |
-| `person` | The protected person, who connected their own Gmail | `GET /me`, `POST /me/disconnect`, their outbox and feedback, their pending reviews and decisions |
+| `caregiver` | Someone who looks after a person: their next of kin or a caregiver (see Care circle) | Routes scoped to every person they look after. Only the next of kin answers caregiver reviews |
+| `person` | The protected person, who connected their own Gmail, or their paired phone | `GET /me`, `POST /me/disconnect`, their outbox and feedback, their pending reviews and decisions, their calls |
+| `helper` | A trusted helper in someone's circle | `GET /me` and `GET /people/{id}/circle` |
 | none | Signed in but not linked to anyone yet | `GET /me`, `POST /people`, `POST /invites/{token}/accept` |
 
 | Code | Meaning |
@@ -319,8 +320,8 @@ caregiver only ever sees alerts.
 | `POST /people/{id}/invites` | caregiver | `{token, created_at, expires_at}`. Single use, valid 7 days |
 | `GET /people/{id}/invites` | caregiver | Invites still waiting |
 | `POST /people/{id}/invites/{token}/cancel` | caregiver | `{status: "cancelled"}` |
-| `GET /invites/{token}` | **nobody: no sign-in** | `{valid, problem, person_name}`. `person_name` is set only when the link works |
-| `POST /invites/{token}/accept` | the person, signed in with Google | The same as `GET /me`. A person already linked to this same profile may reconnect. An account linked elsewhere gets `409` |
+| `GET /invites/{token}` | **nobody: no sign-in** | `{valid, problem, person_name, role, invitee_name}`. `person_name` is set only when the link works. `role` is empty for a Gmail invite, or the circle role a circle invite offers |
+| `POST /invites/{token}/accept` | the person, signed in with Google; for a circle invite, whoever was invited | The same as `GET /me`. A person already linked to this same profile may reconnect. An account linked elsewhere gets `409`. A circle invite links the caller in its role instead; the protected person, or someone already in this circle, gets `409` |
 | `POST /me/disconnect` | the person | The same as `GET /me`. Stops scanning at once and asks Google to revoke the token |
 
 **Mailbox `kind`** is `gmail` (the person's own, one per person) or `forwarded`
@@ -348,6 +349,42 @@ mode, limited to 100 listed test users, and refresh tokens expire after about
 seven days, so a connection needs re-signing weekly (it then shows as a
 `problem`). Verification is a separate step before real users. `GET /health`
 reports `"gmail": true` when the server has a Clerk key.
+
+## Care circle
+
+Everyone who helps keep one person safe. Whoever adds the person is their
+**next of kin**; databases from before roles existed treat every caregiver as
+next of kin.
+
+| Circle role | Signs in as | May |
+|---|---|---|
+| `protected` | `person` | See their own warnings, calls and the circle; remove anyone but the next of kin |
+| `next_of_kin` | `caregiver` | Everything a caregiver may, plus answer caregiver reviews and invite or remove people. One per person |
+| `caregiver` | `caregiver` | See alerts, calls, money and devices. Answering a caregiver review gets `403` |
+| `helper` | `helper` | See the circle only |
+
+| Call | Who | Returns |
+|---|---|---|
+| `GET /people/{id}/circle` | anyone in the circle | `[{id, name, relation, role, status, you, pending?}]`: the person first, then members, then invites not yet accepted (`pending: true`). `id` never reveals a sign-in id or invite token |
+| `POST /people/{id}/circle/invites` with `{"name": "Naledi", "role": "caregiver"}` | next of kin | `{token, role, name, expires_at}`. Open it like any invite: `/?invite=<token>`. A second next of kin gets `409` |
+| `GET /people/{id}/circle/invites` | next of kin | Circle invites still waiting, with their tokens |
+| `POST /people/{id}/circle/invites/{token}/cancel` | next of kin | `{status: "cancelled"}` |
+| `POST /people/{id}/circle/{member id}/remove` | next of kin, or the person | `{status: "removed"}`. The next of kin cannot be removed (`409`) |
+
+## Calls
+
+The paired Android phone reports a call when it ends: who, when and how long,
+never what was said. After a call from an unknown number it shows the common
+call scams and sends back what the person tapped.
+
+| Call | Who | Returns |
+|---|---|---|
+| `POST /people/{id}/calls` with `{call_id, number, at, seconds, in_contacts, contact_name, tips_shown}` | the person's phone | The call. `call_id` is the phone's own, so a report sent twice is kept once |
+| `POST /people/{id}/calls/{call_id}/answer` with `{"answer": "asked_code"}` | the person's phone | The call. `answer` is `known` (someone they know), `asked_code` (the caller asked for a PIN or code) or `told_kin` (tell my family) |
+| `GET /people/{id}/calls` | the person and their caregivers | The newest 200 calls, newest first |
+
+Calls are reported only by the person's own phone (`X-Device-Key`): a caregiver
+gets `403`, so nobody can put an answer in the person's mouth.
 
 ## Demo controls
 
