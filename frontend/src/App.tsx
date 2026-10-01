@@ -22,7 +22,7 @@ import { Alerts } from './tabs/Alerts'
 import { Devices } from './tabs/Devices'
 import { Money } from './tabs/Money'
 import { Today } from './tabs/Today'
-import { AddPersonScreen, ConnectScreen, PersonHome, SignedOutScreen } from './screens'
+import { AddPersonScreen, ConnectScreen, PersonHome, RoleScreen, SignedOutScreen } from './screens'
 import { usePeopleSummary } from './people'
 import { AddPersonForm } from './components/add-person-form'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog'
@@ -75,6 +75,7 @@ function Authed() {
     )
   }
   if (me.role === 'caregiver' && me.people.length > 0) return <Workspace me={me} onMeChanged={refresh} />
+  if (me.role === null) return <RoleScreen onAdded={refresh} />
   return <AddPersonScreen onAdded={refresh} />
 }
 

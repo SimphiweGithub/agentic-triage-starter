@@ -1,9 +1,10 @@
 import { SignInButton, SignUpButton, UserButton } from '@clerk/react'
-import { MailCheck, ShieldCheck } from 'lucide-react'
+import { HeartHandshake, MailCheck, ShieldCheck, UserRound, Users } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { api, post } from './api'
 import { AddPersonForm } from './components/add-person-form'
+import { CallSafetyCard } from './components/call-safety'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
@@ -269,6 +270,7 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
           ))}
         </CardContent>
       )}
+      <CallSafetyCard />
       {connected && (
         <CardContent>
           <Button variant="outline" className="h-11 px-5 text-base" onClick={() => setConfirm(true)}>
@@ -296,7 +298,16 @@ export function PersonHome({ me, onChanged }: { me: Me; onChanged: () => void })
   )
 }
 
-export function AddPersonScreen({ onAdded }: { onAdded: () => void }) {
+/** Which kind of helper someone is. Both send the same `caregiver` role to the API; only the wording differs. */
+export type Helper = 'caregiver' | 'kin'
+
+const HELPER_COPY: Record<Helper, { title: string; text: string }> = {
+  caregiver: { title: 'Who are you looking after?', text: 'You will then be able to invite them to connect their own Gmail. You never need their password. You can add more people later.' },
+  kin: { title: 'Which family member are you watching over?', text: 'You will be able to invite them to connect their own Gmail, and you will see warnings about scams aimed at them. You never need their password.' },
+}
+
+export function AddPersonScreen({ onAdded, helper = 'caregiver' }: { onAdded: () => void; helper?: Helper }) {
+  const copy = HELPER_COPY[helper]
   return (
     <Centered>
       <CardHeader>
@@ -304,11 +315,58 @@ export function AddPersonScreen({ onAdded }: { onAdded: () => void }) {
           <Brand />
           <UserButton />
         </div>
-        <CardTitle className="text-3xl leading-tight font-bold">Who are you looking after?</CardTitle>
-        <CardDescription className="text-base">You will then be able to invite them to connect their own Gmail. You never need their password. You can add more people later.</CardDescription>
+        <CardTitle className="text-3xl leading-tight font-bold">{copy.title}</CardTitle>
+        <CardDescription className="text-base">{copy.text}</CardDescription>
       </CardHeader>
       <CardContent>
         <AddPersonForm onAdded={onAdded} />
+      </CardContent>
+    </Centered>
+  )
+}
+
+/** First screen for a signed-in user with no role and no invite: who are you? */
+export function RoleScreen({ onAdded }: { onAdded: () => void }) {
+  const [choice, setChoice] = useState<Helper | 'elderly' | null>(null)
+  if (choice === 'caregiver' || choice === 'kin') return <AddPersonScreen onAdded={onAdded} helper={choice} />
+
+  const options = [
+    { id: 'caregiver', icon: HeartHandshake, title: 'Care giver', text: 'I look after someone.' },
+    { id: 'kin', icon: Users, title: 'Next of kin', text: 'I’m family and want to help keep them safe.' },
+    { id: 'elderly', icon: UserRound, title: 'I need protection', text: 'I’m the one who wants KinGuard watching over me.' },
+  ] as const
+
+  return (
+    <Centered>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <Brand />
+          <UserButton />
+        </div>
+        <CardTitle className="text-3xl leading-tight font-bold">Who are you?</CardTitle>
+        <CardDescription className="text-base">Pick the one that fits best. You can’t change it later without help.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {options.map(({ id, icon: Icon, title, text }) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={choice === id}
+            onClick={() => setChoice(id)}
+            className="flex items-start gap-3 rounded-lg border p-4 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring aria-pressed:border-primary"
+          >
+            <Icon className="mt-1 size-5 shrink-0 text-primary" aria-hidden="true" />
+            <span>
+              <span className="block text-lg font-bold">{title}</span>
+              <span className="block text-muted-foreground">{text}</span>
+            </span>
+          </button>
+        ))}
+        {choice === 'elderly' && (
+          <p className="rounded-lg bg-muted p-4" role="status">
+            To protect you, KinGuard needs someone who looks after you to send you an invite link. Ask them for it, then open the link on this phone.
+          </p>
+        )}
       </CardContent>
     </Centered>
   )
