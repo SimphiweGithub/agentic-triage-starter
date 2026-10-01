@@ -113,3 +113,10 @@
 
 .phone .warning { padding: 0.9rem 1rem; border-radius: 0.75rem; background: var(--warn-soft); color: var(--warn); }
 .phone .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* What was stopped for the person: three big numbers, nothing to tap. */
+.phone .tally { display: grid; gap: 0.75rem; padding: 1.1rem; border-radius: 1.25rem; background: var(--card); border: 1px solid var(--border); }
+.phone .tally dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; margin: 0; }
+.phone .tally dl > div { display: grid; gap: 0.2rem; align-content: start; }
+.phone .tally dt { font-size: 0.95rem; color: var(--muted-foreground); }
+.phone .tally dd { margin: 0; font-size: 1.9rem; line-height: 1.1; font-weight: 700; color: var(--info); overflow-wrap: anywhere; }

@@ -2,6 +2,7 @@ import { LocalNotifications } from '@capacitor/local-notifications'
 import { Check, Lock, MicOff, Phone, ShieldCheck, Users } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { CALL_SCAMS, duration } from '../calls'
+import type { ProtectionStats } from '../components/protection-stats'
 import { ROLE, type CircleRole } from '../circle'
 import type { CallAnswer } from '../calls'
 import { warnedAboutBin } from '../format'
@@ -413,15 +414,21 @@ type Warning = { incident_id: string; message: string }
 function ProtectedHome({ server, person, code, callsOn, onScams, onSetup }: { server: string; person: { id: string; name: string }; code: string; callsOn: boolean; onScams: () => void; onSetup: () => void }) {
   const [warnings, setWarnings] = useState<Warning[]>([])
   const [reviews, setReviews] = useState<Review[]>([])
+  const [stats, setStats] = useState<ProtectionStats | null>(null)
   const [busy, setBusy] = useState(false)
   const base = `${server}/api/people/${encodeURIComponent(person.id)}`
   const headers = { 'Content-Type': 'application/json', 'X-Device-Key': code }
 
   const load = useCallback(async () => {
     const get = <T,>(path: string) => fetch(`${base}${path}`, { headers: { 'X-Device-Key': code } }).then((response) => (response.ok ? (response.json() as Promise<T>) : Promise.reject()))
-    const [nextWarnings, nextReviews] = await Promise.all([get<Warning[]>('/outbox').catch(() => []), get<Review[]>('/person/reviews?status=PENDING').catch(() => [])])
+    const [nextWarnings, nextReviews, nextStats] = await Promise.all([
+      get<Warning[]>('/outbox').catch(() => []),
+      get<Review[]>('/person/reviews?status=PENDING').catch(() => []),
+      get<ProtectionStats>('/person/stats').catch(() => null),
+    ])
     setWarnings([...new Map(nextWarnings.map((item) => [item.incident_id, item])).values()])
     setReviews(nextReviews)
+    if (nextStats) setStats(nextStats)
   }, [base, code])
 
   useEffect(() => {
@@ -491,6 +498,29 @@ function ProtectedHome({ server, person, code, callsOn, onScams, onSetup }: { se
       )}
 
       {!review && !warning && <p className="lead">Nothing needs you. Scam Stop is watching quietly.</p>}
+
+      {stats && (
+        <section className="tally" aria-labelledby="tally">
+          <h2 id="tally">What Scam Stop stopped for you</h2>
+          <dl>
+            <div>
+              <dt>Scams stopped</dt>
+              <dd>{stats.scams_stopped}</dd>
+            </div>
+            <div>
+              <dt>Scammers blocked</dt>
+              <dd>{stats.senders_blocked}</dd>
+            </div>
+            <div>
+              <dt>Money kept safe</dt>
+              <dd>R{Math.round(stats.money_protected).toLocaleString('en-ZA')}</dd>
+            </div>
+          </dl>
+          <span className="muted">
+            Out of {stats.messages_checked} {stats.messages_checked === 1 ? 'message' : 'messages'} checked.
+          </span>
+        </section>
+      )}
 
       <button type="button" className="big secondary" onClick={onScams}>
         <Phone aria-hidden="true" /> Common phone scams
