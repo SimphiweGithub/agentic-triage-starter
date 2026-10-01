@@ -185,7 +185,7 @@ export function alertGroup(incident: Incident): Group {
 }
 
 /** Channels that belong to a device. Mailboxes belong to the person and are listed separately. */
-export const CHANNELS = ['SMS', 'WhatsApp'] as const
+export const CHANNELS = ['SMS', 'WhatsApp', 'Calls'] as const
 export type Channel = (typeof CHANNELS)[number]
 
 /** The channel the first message of an alert arrived on. */

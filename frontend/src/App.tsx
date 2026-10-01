@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { setActivePerson, setTokenGetter, useKinGuard } from './api'
 import { collectActions } from './actions'
+import { callNeedsYou, useCalls } from './calls'
+import { useCircle } from './circle'
 import { ActionsPanel } from './components/actions-panel'
 import { AlertDetailDialog } from './components/alert-detail'
 import { AppSidebar } from './components/app-sidebar'
@@ -19,6 +21,8 @@ import { TABS, type TabId } from './nav'
 import { incidentTitle, reviewQuestion, setPerson } from './format'
 import { clearInviteFromAddress, inviteFromAddress, useMe } from './me'
 import { Alerts } from './tabs/Alerts'
+import { Calls } from './tabs/Calls'
+import { Circle } from './tabs/Circle'
 import { Devices } from './tabs/Devices'
 import { Money } from './tabs/Money'
 import { Today } from './tabs/Today'
@@ -158,6 +162,8 @@ function Dashboard({ person, people, inheritDevices, onSelectPerson, onAddPerson
   const personId = person.id
   const { state, briefs, mailboxes, error, refresh } = useKinGuard(personId)
   const store = useDevices(personId, inheritDevices)
+  const { calls, supported: callsSupported } = useCalls(personId)
+  const circle = useCircle(person, state?.world.guardian)
   const [tab, setTab] = useState<TabId>(tabFromHash)
   // Everything that opens on top of the current page lives here, so any page can open any of it.
   const [alertId, setAlertId] = useState<string | null>(null)
@@ -199,6 +205,21 @@ function Dashboard({ person, people, inheritDevices, onSelectPerson, onAddPerson
       toast('New alert', { description: incidentTitle(incident), action: { label: 'Open', onClick: () => setAlertId(incident.incident_id) } })
     }
   }, [state])
+
+  // A call the person flagged on their phone is as urgent as a decision: say so at once.
+  const seenCalls = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    const previous = seenCalls.current
+    seenCalls.current = new Set(calls.map((item) => item.call_id))
+    if (!previous) return
+    for (const call of calls) {
+      if (previous.has(call.call_id) || !callNeedsYou(call)) continue
+      toast.error(call.answer === 'asked_code' ? `${person.name} says a caller asked for a code` : `${person.name} wants you to know about a call`, {
+        description: `From ${call.number}. Phone them now.`,
+        action: { label: 'See the call', onClick: () => go('calls') },
+      })
+    }
+  }, [calls, person.name])
 
   // Tell the caregiver when a mailbox stops being checked: the person disconnected, or Google refused the connection.
   const mailboxStates = useRef<Map<string, Mailbox['status']> | null>(null)
@@ -248,6 +269,8 @@ function Dashboard({ person, people, inheritDevices, onSelectPerson, onAddPerson
 
   const actions = state ? collectActions(state, store.devices, mailboxes) : { reviews: [], gaps: [], failed: [], mailboxes: [], total: 0 }
   const alertsWaiting = actions.reviews.length
+  const weekAgo = Date.now() - 7 * 24 * 3600 * 1000
+  const callsWaiting = calls.filter((call) => callNeedsYou(call) && new Date(call.at).getTime() >= weekAgo).length
 
   return (
     <SidebarProvider>
@@ -255,6 +278,9 @@ function Dashboard({ person, people, inheritDevices, onSelectPerson, onAddPerson
         tab={tab}
         onTab={go}
         alertsWaiting={alertsWaiting}
+        callsWaiting={callsWaiting}
+        circle={circle.members}
+        you={circle.you}
         devices={store.devices}
         guardian={state?.world.guardian}
         people={people}
@@ -275,10 +301,10 @@ function Dashboard({ person, people, inheritDevices, onSelectPerson, onAddPerson
               <MessageSquarePlus aria-hidden="true" />
               <span className="hidden sm:inline">Check a message</span>
             </Button>
-            <Button className="h-10 gap-2 px-3" variant={actions.total > 0 ? 'default' : 'outline'} onClick={() => setActionsOpen(true)}>
+            <Button className="h-10 gap-2 px-3" variant={actions.total + callsWaiting > 0 ? 'default' : 'outline'} onClick={() => setActionsOpen(true)}>
               <ClipboardList aria-hidden="true" />
               <span>Needs you</span>
-              {actions.total > 0 && <Badge className="bg-warn-soft text-warn">{actions.total}</Badge>}
+              {actions.total + callsWaiting > 0 && <Badge className="bg-warn-soft text-warn">{actions.total + callsWaiting}</Badge>}
             </Button>
           </div>
         </header>
@@ -292,14 +318,23 @@ function Dashboard({ person, people, inheritDevices, onSelectPerson, onAddPerson
               state={state}
               devices={store.devices}
               actions={actions}
+              calls={calls}
+              callsSupported={callsSupported}
+              role={circle.you?.role}
               onOpenActions={() => setActionsOpen(true)}
               onOpenAlert={openAlert}
               onOpenDevice={openDevice}
               onAddDevice={() => setAddOpen(true)}
+              onCheck={() => setCheckOpen(true)}
+              onDecided={decided}
               onGo={go}
             />
           ) : tab === 'alerts' ? (
             <Alerts state={state} onOpenAlert={openAlert} onCheck={() => setCheckOpen(true)} />
+          ) : tab === 'calls' ? (
+            <Calls calls={calls} supported={callsSupported} />
+          ) : tab === 'circle' ? (
+            <Circle personId={personId} members={circle.members} listed={circle.listed} you={circle.you} guardian={state.world.guardian} onChanged={circle.refresh} />
           ) : tab === 'devices' ? (
             <Devices state={state} mailboxes={mailboxes} devices={store.devices} onOpenDevice={openDevice} onAddDevice={() => setAddOpen(true)} onCheck={() => setCheckOpen(true)} onInvite={() => setInviteOpen(true)} />
           ) : (

@@ -16,7 +16,7 @@ export type Device = {
 export const KIND_LABEL: Record<DeviceKind, string> = { phone: 'Phone', tablet: 'Tablet', computer: 'Computer' }
 
 export const KIND_CHANNELS: Record<DeviceKind, Channel[]> = {
-  phone: ['SMS', 'WhatsApp'],
+  phone: ['SMS', 'WhatsApp', 'Calls'],
   tablet: ['WhatsApp'],
   computer: ['WhatsApp'],
 }

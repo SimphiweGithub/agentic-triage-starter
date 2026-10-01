@@ -185,7 +185,7 @@ function Activity({ state }: { state: KinGuardState }) {
   const seen = channelActivity(state)
   return (
     <ul className="divide-y">
-      {[...CHANNELS, 'Email'].map((channel) => {
+      {[...CHANNELS.filter((channel) => channel !== 'Calls'), 'Email'].map((channel) => {
         const item = seen[channel]
         return (
           <li key={channel} className="flex items-center gap-3 py-3">

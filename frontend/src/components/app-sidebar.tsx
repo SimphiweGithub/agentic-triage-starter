@@ -14,6 +14,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
+import { ROLE, initial, type CircleMember } from '@/circle'
 import { deviceGaps, type Device } from '@/devices'
 import { PERSON } from '@/format'
 import type { PersonSummary } from '@/types'
@@ -25,6 +26,10 @@ type Props = {
   tab: TabId
   onTab: (tab: TabId) => void
   alertsWaiting: number
+  callsWaiting: number
+  /** The active person's care circle, and which of them is signed in. */
+  circle: CircleMember[]
+  you: CircleMember | undefined
   devices: Device[]
   /** Whether a caregiver is enrolled for the active person. Undefined until their state has loaded. */
   guardian: boolean | undefined
@@ -36,7 +41,7 @@ type Props = {
   onAddDevice: () => void
 }
 
-export function AppSidebar({ tab, onTab, alertsWaiting, devices, guardian, people, activeId, onSelectPerson, onAddPerson, onOpenDevice, onAddDevice }: Props) {
+export function AppSidebar({ tab, onTab, alertsWaiting, callsWaiting, circle, you, devices, guardian, people, activeId, onSelectPerson, onAddPerson, onOpenDevice, onAddDevice }: Props) {
   return (
     <Sidebar>
       <SidebarHeader className="p-4">
@@ -68,8 +73,9 @@ export function AppSidebar({ tab, onTab, alertsWaiting, devices, guardian, peopl
                         {person.relation && <span className="text-xs font-normal text-muted-foreground">{person.relation}</span>}
                       </span>
                     </SidebarMenuButton>
+                    {active && <CircleFaces circle={circle} />}
                     {!active && waiting > 0 && (
-                      <SidebarMenuBadge className="bg-warn text-white" aria-label={`${waiting} waiting for ${person.name}`}>
+                      <SidebarMenuBadge className="bg-warn text-white!" aria-label={`${waiting} waiting for ${person.name}`}>
                         {waiting}
                       </SidebarMenuBadge>
                     )}
@@ -89,7 +95,8 @@ export function AppSidebar({ tab, onTab, alertsWaiting, devices, guardian, peopl
                     <item.icon className="size-5" aria-hidden="true" />
                     <span>{item.label}</span>
                   </SidebarMenuButton>
-                  {item.id === 'alerts' && alertsWaiting > 0 && <SidebarMenuBadge className="bg-warn text-white">{alertsWaiting}</SidebarMenuBadge>}
+                  {item.id === 'alerts' && alertsWaiting > 0 && <SidebarMenuBadge className="bg-warn text-white!">{alertsWaiting}</SidebarMenuBadge>}
+                  {item.id === 'calls' && callsWaiting > 0 && <SidebarMenuBadge className="bg-warn text-white!">{callsWaiting}</SidebarMenuBadge>}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
@@ -125,14 +132,41 @@ export function AppSidebar({ tab, onTab, alertsWaiting, devices, guardian, peopl
       </SidebarContent>
 
       <SidebarFooter className="gap-3 p-4">
-        <div className="grid gap-1 rounded-lg bg-background p-3 text-sm">
+        <div className="grid justify-items-start gap-1.5 rounded-lg border bg-background p-3 text-sm">
+          {you && <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-bold', ROLE[you.role].chip)}>{ROLE[you.role].label}</span>}
           <strong>Looking after {PERSON.name}</strong>
           <span className="text-muted-foreground">
-            {guardian === false ? `No guardian enrolled: ${PERSON.name} decides for themselves, after a cooling-off.` : 'You are the guardian. Anything that touches the bank waits for you.'}
+            {guardian === false
+              ? `No next of kin enrolled: ${PERSON.name} decides for themselves, after a cooling-off.`
+              : you?.role === 'next_of_kin'
+                ? `You approve anything that touches ${PERSON.name}’s bank.`
+                : you
+                  ? ROLE[you.role].summary
+                  : 'Anything that touches the bank waits for the next of kin.'}
           </span>
         </div>
         <UserButton />
       </SidebarFooter>
     </Sidebar>
+  )
+}
+
+/** The other people in the active person's circle, as overlapping initials. */
+function CircleFaces({ circle }: { circle: CircleMember[] }) {
+  const others = circle.filter((member) => member.role !== 'protected')
+  if (others.length === 0) return null
+  return (
+    <div className="flex items-center gap-2 px-2 pt-1 pb-2 text-xs text-muted-foreground">
+      <span className="flex">
+        {others.slice(0, 4).map((member, index) => (
+          <span key={member.id} title={`${member.you ? 'You' : member.name} · ${ROLE[member.role].label}`} className={cn('grid size-6 place-items-center rounded-full border-2 border-sidebar text-[11px] font-bold', ROLE[member.role].avatar, index > 0 && '-ml-2')}>
+            {member.you ? 'Y' : initial(member.name)}
+          </span>
+        ))}
+      </span>
+      <span>
+        {others.length} {others.length === 1 ? 'person' : 'people'} in the circle
+      </span>
+    </div>
   )
 }
