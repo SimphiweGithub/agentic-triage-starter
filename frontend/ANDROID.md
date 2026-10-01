@@ -1,23 +1,39 @@
 # Scam Stop on Android
 
-The same front end, wrapped with Capacitor. On a phone it shows the protected
-person's view, not the caregiver dashboard: it asks for consent, reads the SMS
-inbox, sends each text to the Scam Stop server, and shows the warnings the
-server writes, as notifications too.
+The phone is a **bridge**. Once it is paired and allowed, native Android code
+forwards every new text and chat-app message to the Scam Stop server by itself,
+with the app closed, and shows the warnings the server sends back as phone
+notifications. The caregiver dashboard does the rest. The app's own screen is
+for setting up, and for the two things only the person can do: answer their
+own questions when no family member is enrolled, and see disputes to lodge.
+
+```
+New SMS ──► SmsReceiver (manifest, woken by Android) ─┐
+WhatsApp ─► NotificationBridge (notification access) ─┼─► Forwarder ─► POST /api/people/{id}/intake/share/batch
+                                                      │      (privacy filter, queue, X-Device-Key)
+                                                      └─◄ decisions ─► warning notification on the phone
+```
 
 ## What runs where
 
 | Part | File |
 |---|---|
-| Reading the inbox and hearing new texts | `android/app/src/main/java/za/kinguard/app/SmsInboxPlugin.java` (our own plugin) |
-| Registering that plugin | `android/app/src/main/java/za/kinguard/app/MainActivity.java` |
-| SMS and notification permissions, plain-http allowed | `android/app/src/main/AndroidManifest.xml` |
-| The phone screen, sync and notifications | `src/phone/PhoneApp.tsx` |
+| Sending to the server: privacy filter, queue, retry, warning notifications | `android/app/src/main/java/za/kinguard/app/Forwarder.java` |
+| New texts, even with the app closed | `.../SmsReceiver.java`, declared in the manifest |
+| WhatsApp, WhatsApp Business, Telegram, Messenger and Signal | `.../NotificationBridge.java`, a `NotificationListenerService` |
+| First sync of the last week, bridge settings and status, opening Android's notification access screen | `.../SmsInboxPlugin.java` |
+| Registering that plugin | `.../MainActivity.java` |
+| Permissions, the receiver and the listener service | `android/app/src/main/AndroidManifest.xml` |
+| The set-up screen | `src/phone/PhoneApp.tsx` |
 | Phone or browser? | `src/main.tsx` |
 
 One-time PINs, passwords and recovery codes are filtered on the phone before
-anything is sent, using the patterns from `GET /api/privacy/patterns`. The
-server filters them again.
+anything is sent, using the patterns from `GET /api/privacy/patterns`, which
+the app hands to the native code when it pairs. The server filters them again.
+Only the listed chat apps are read; every other app's notifications are
+ignored and never sent. A text is not sent twice: the SMS app's notifications
+are not on the list, and the bridge remembers a hash of the last 500 messages
+because chat apps re-post earlier messages with every new one.
 
 ## Build
 
@@ -62,8 +78,13 @@ in the app.
 
 ## Limits to say out loud
 
-- New texts are caught while the app is open or in the background; if Android
-  closes the app, the next opening catches up from where it left off.
+- WhatsApp is read from its notifications, so a message whose notification is
+  muted or hidden by WhatsApp's own settings is not seen.
+- Notification access is a special permission: Android only lets the person
+  switch it on in Settings. On some phones a directly installed app needs
+  App info → ⋮ → **Allow restricted settings** first.
+- If the server cannot be reached, messages wait in a queue on the phone and
+  go with the next message.
 - Google Play only allows SMS reading for the default SMS app, so this is
   installed directly, not through the Play Store.
 - The caregiver dashboard with Google sign-in stays in the browser, because

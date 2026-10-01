@@ -1,7 +1,7 @@
 import { LocalNotifications } from '@capacitor/local-notifications'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { PERSON } from '../format'
-import { SmsInbox, type PhoneSms } from './sms'
+import { SmsInbox, type BridgeStatus, type PhoneSms } from './sms'
 import './phone.css'
 
 const FIRST_SYNC_DAYS = 7
@@ -9,11 +9,6 @@ const CHECK_EVERY_MS = 15000
 const saved = {
   get: (key: string, fallback: string) => localStorage.getItem(`kinguard.${key}`) ?? fallback,
   set: (key: string, value: string) => localStorage.setItem(`kinguard.${key}`, value),
-}
-
-interface Warning {
-  incident_id: string
-  message: string
 }
 
 /** A decision the server is asking the person to make themselves, when no guardian is enrolled. */
@@ -30,25 +25,24 @@ interface Dispute {
   steps: string[]
 }
 
-/** The protected person's phone: reads texts, sends them to the Scam Stop server, shows warnings and, with no guardian, asks them. */
+/**
+ * The phone is a bridge. Once paired and allowed, the native code forwards every new text and chat
+ * message to the server by itself, with this app closed, and shows the warnings the server sends back.
+ * This screen is for setting that up, and for the few things only the person can do: answer their own
+ * questions when no family member is enrolled, and see disputes to lodge. The dashboard does the rest.
+ */
 export function PhoneApp() {
   const [server, setServer] = useState(() => saved.get('server', 'http://localhost:8000'))
   const [code, setCode] = useState(() => saved.get('pairing', '')) // from the dashboard: Devices → Pair the phone app
-  const [draft, setDraft] = useState(code) // what is typed; it becomes the code only on "Pair this phone"
-  const [person, setPerson] = useState('') // whose phone this is, as the server says
-  const [personChecked, setPersonChecked] = useState(false) // nothing is sent until we know whose phone this is
-  const [consented, setConsented] = useState(() => saved.get('consented', '') === 'yes')
-  const [granted, setGranted] = useState(false)
+  const [draft, setDraft] = useState(code)
+  const [person, setPerson] = useState('')
+  const [bridge, setBridge] = useState<BridgeStatus | null>(null)
   const [guardian, setGuardian] = useState(true)
-  const [warnings, setWarnings] = useState<Warning[]>([])
   const [questions, setQuestions] = useState<Question[]>([])
   const [disputes, setDisputes] = useState<Dispute[]>([])
   const [status, setStatus] = useState('')
-  const [counts, setCounts] = useState({ checked: 0, kept: 0 })
   const [now, setNow] = useState(0)
-  const filters = useRef<RegExp[]>([])
 
-  /** Calls about this person go to /api/people/{id}/...; `shared` routes that hold no data stay at /api. */
   const call = useCallback(
     async <T,>(path: string, body?: unknown, shared = false): Promise<T> => {
       const base = person && !shared ? `${server}/api/people/${encodeURIComponent(person)}` : `${server}/api`
@@ -64,77 +58,87 @@ export function PhoneApp() {
     [server, person, code],
   )
 
-  /** Never let a one-time code or password leave the phone: the server's own filter, applied here first. */
-  const allowed = useCallback(async (messages: PhoneSms[]) => {
-    if (filters.current.length === 0) {
-      const patterns = await call<{ withhold: string[]; flags: string }>('/privacy/patterns', undefined, true)
-      filters.current = patterns.withhold.map((pattern) => new RegExp(pattern, patterns.flags))
+  const checkBridge = useCallback(async () => setBridge(await SmsInbox.bridgeStatus().catch(() => null)), [])
+
+  // Pair: learn whose phone this is, then hand the server, person, code and privacy filter to the native bridge.
+  useEffect(() => {
+    if (!code) return
+    const headers = { 'X-Device-Key': code }
+    Promise.all([
+      fetch(`${server}/api/me`, { headers }).then(async (response) => {
+        if (!response.ok) throw new Error(response.status === 401 ? 'This pairing code is not accepted. Ask for a new one.' : `server answered ${response.status}`)
+        return response.json() as Promise<{ person: { id: string } | null }>
+      }),
+      fetch(`${server}/api/privacy/patterns`).then((response) => response.json() as Promise<{ withhold: string[] }>),
+    ])
+      .then(async ([me, patterns]) => {
+        const id = me.person?.id ?? ''
+        setPerson(id)
+        await SmsInbox.configureBridge({ server, person: id, code, patterns: patterns.withhold })
+        setStatus('')
+        await checkBridge()
+      })
+      .catch((error) => setStatus(error instanceof Error ? error.message : String(error)))
+  }, [server, code, checkBridge])
+
+  /** The last week of texts, once, so the dashboard starts with history. New texts are the bridge's job. */
+  const backfill = useCallback(async () => {
+    if (!person || saved.get('backfilled', '') === person) return
+    const { messages } = await SmsInbox.getMessages({ since: Date.now() - FIRST_SYNC_DAYS * 24 * 3600 * 1000, limit: 200 })
+    const filters = (await call<{ withhold: string[]; flags: string }>('/privacy/patterns', undefined, true)).withhold.map((pattern) => new RegExp(pattern, 'i'))
+    const kept = messages.filter((sms: PhoneSms) => sms.text.trim() && !filters.some((pattern) => pattern.test(sms.text)))
+    if (kept.length > 0) {
+      await call('/intake/share/batch', kept.map((sms) => ({ text: sms.text, sender: sms.sender, channel: 'sms', timestamp: sms.timestamp })))
     }
-    return messages.filter((sms) => sms.text.trim() && !filters.current.some((pattern) => pattern.test(sms.text)))
-  }, [call])
+    saved.set('backfilled', person)
+  }, [person, call])
 
-  const send = useCallback(
-    async (messages: PhoneSms[]) => {
-      const kept = await allowed(messages)
-      if (kept.length > 0) {
-        await call('/intake/share/batch', kept.map((sms) => ({ text: sms.text, sender: sms.sender, channel: 'sms', timestamp: sms.timestamp })))
-      }
-      setCounts((before) => ({ checked: before.checked + kept.length, kept: before.kept + messages.length - kept.length }))
-    },
-    [allowed, call],
-  )
-
-  /** Send every text received since the last sync (the last week, the first time). */
-  const sync = useCallback(async () => {
-    try {
-      const since = Number(saved.get('since', String(Date.now() - FIRST_SYNC_DAYS * 24 * 3600 * 1000)))
-      const { messages } = await SmsInbox.getMessages({ since, limit: 200 })
-      await send(messages)
-      if (messages.length > 0) saved.set('since', String(messages[messages.length - 1].millis))
-      setStatus(`Checked at ${new Date().toLocaleTimeString()}`)
-    } catch (error) {
-      setStatus(`Could not reach Scam Stop: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }, [send])
-
-  /** Warnings, the person's own questions and any disputes to lodge; a notification for anything new. */
+  /** The person's own questions and disputes. Warnings arrive as notifications from the bridge itself. */
   const refresh = useCallback(async () => {
+    if (!person) return
     try {
-      const [outbox, pending, mine] = await Promise.all([
-        call<Warning[]>('/outbox'),
+      const [pending, mine] = await Promise.all([
         call<Question[]>('/person/reviews?status=PENDING'),
         call<{ guardian: boolean; disputes: Dispute[] }>('/person/state'),
       ])
-      const warned = Number(saved.get('warned', '0'))
-      for (const [index, warning] of outbox.slice(warned).entries()) {
-        await LocalNotifications.schedule({ notifications: [{ id: warned + index + 1, title: 'Scam Stop', body: warning.message }] })
-      }
-      saved.set('warned', String(outbox.length))
       const asked = new Set(saved.get('asked', '').split(',').filter(Boolean))
       for (const question of pending.filter((item) => !asked.has(item.review_id))) {
         await LocalNotifications.schedule({ notifications: [{ id: 100000 + asked.size, title: 'Scam Stop needs your answer', body: askText(question) }] })
         asked.add(question.review_id)
       }
       saved.set('asked', [...asked].join(','))
-      setWarnings([...outbox].reverse())
       setGuardian(mine.guardian)
       setQuestions(mine.guardian ? [] : pending)
       setDisputes(mine.disputes)
-      setStatus((before) => (before.startsWith('Could not load') ? '' : before))
       setNow(Date.now())
+      await checkBridge()
     } catch (error) {
-      setStatus(`Could not load warnings: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(`Could not reach Scam Stop: ${error instanceof Error ? error.message : String(error)}`)
     }
-  }, [call])
+  }, [person, call, checkBridge])
 
-  async function agree(hasGuardian: boolean) {
-    saved.set('consented', 'yes')
-    setConsented(true)
-    await call('/settings/guardian', { enrolled: hasGuardian }).catch(() => undefined)
-    setGuardian(hasGuardian)
-    const answer = await SmsInbox.requestAccess()
-    setGranted(answer.granted)
+  useEffect(() => {
+    if (!person) return
+    backfill().catch(() => undefined)
+    const timer = setInterval(refresh, CHECK_EVERY_MS)
+    const first = setTimeout(refresh, 0)
+    return () => {
+      clearInterval(timer)
+      clearTimeout(first)
+    }
+  }, [person, backfill, refresh])
+
+  useEffect(() => {
+    checkBridge()
+    const back = () => document.visibilityState === 'visible' && checkBridge()  // after returning from Android settings
+    document.addEventListener('visibilitychange', back)
+    return () => document.removeEventListener('visibilitychange', back)
+  }, [checkBridge])
+
+  async function allowTexts() {
+    await SmsInbox.requestAccess()
     await LocalNotifications.requestPermissions()
+    await checkBridge()
   }
 
   async function answer(question: Question, approved: boolean) {
@@ -146,89 +150,38 @@ export function PhoneApp() {
     }
   }
 
-  async function changeGuardian(hasGuardian: boolean) {
-    await call('/settings/guardian', { enrolled: hasGuardian }).catch(() => undefined)
-    await refresh()
-  }
-
-  // Ask the server whose phone this is. Paired, the code names the person. Without a code (development
-  // mode only) the first person the developer looks after is used.
-  useEffect(() => {
-    setPersonChecked(false)
-    fetch(`${server}/api/me`, { headers: code ? { 'X-Device-Key': code } : {} })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(response.status === 401 ? 'This pairing code is not accepted. Ask for a new one.' : `server answered ${response.status}`)
-        return response.json()
-      })
-      .then((me: { person?: { id: string } | null; people?: { id: string }[] }) => {
-        setPerson(me.person?.id ?? me.people?.[0]?.id ?? '')
-        setStatus('')
-      })
-      .catch((error) => setStatus(error instanceof Error ? error.message : String(error)))
-      .finally(() => setPersonChecked(true))
-  }, [server, code])
-
-  // On start: if consent was given before, check access quietly.
-  useEffect(() => {
-    if (!consented) return
-    SmsInbox.requestAccess().then((access) => setGranted(access.granted))
-  }, [consented])
-
-  // Once access is granted: sync, then send each new text the moment it arrives.
-  useEffect(() => {
-    if (!granted || !personChecked) return
-    const first = setTimeout(sync, 0)
-    const listening = SmsInbox.addListener('smsReceived', (sms) => {
-      send([sms]).then(() => saved.set('since', String(sms.millis))).catch(() => setStatus('Could not reach Scam Stop; will retry'))
-    })
-    return () => {
-      clearTimeout(first)
-      listening.then((handle) => handle.remove())
-    }
-  }, [granted, personChecked, send, sync])
-
-  // Every few seconds: warnings, questions and disputes.
-  useEffect(() => {
-    if (!granted || !personChecked) return
-    const timer = setInterval(refresh, CHECK_EVERY_MS)
-    const first = setTimeout(refresh, 0)
-    return () => {
-      clearInterval(timer)
-      clearTimeout(first)
-    }
-  }, [granted, personChecked, refresh])
-
-  if (!consented) {
-    return (
-      <main className="phone">
-        <p className="brand">Scam Stop</p>
-        <h1>Hello {PERSON.name}</h1>
-        <p>Scam Stop reads the text messages you receive and checks them for scams and unwanted debit orders.</p>
-        <ul>
-          <li>One-time PINs, passwords and recovery codes are never sent anywhere.</li>
-          <li>Other texts are sent to your Scam Stop server to be checked.</li>
-          <li>Scam Stop never sends, deletes or replies to a message.</li>
-        </ul>
-        <p>Is there someone in your family who should approve anything that touches your bank?</p>
-        <button type="button" className="big" onClick={() => agree(true)}>
-          I agree. My family will help
-        </button>
-        <button type="button" className="big secondary" onClick={() => agree(false)}>
-          I agree. I will decide myself
-        </button>
-      </main>
-    )
-  }
+  const ready = Boolean(bridge?.configured && bridge.sms && bridge.notificationAccess)
 
   return (
     <main className="phone">
       <p className="brand">Scam Stop</p>
-      <p className={granted ? 'state on' : 'state off'}>{granted ? 'Your messages are being watched' : 'Scam Stop needs permission to read your messages'}</p>
-      {!granted && (
-        <button type="button" className="big" onClick={() => agree(guardian)}>
-          Allow access
-        </button>
-      )}
+      <p className={ready ? 'state on' : 'state off'}>
+        {ready ? `Protecting ${PERSON.name}'s texts and WhatsApp. You can close this app.` : 'Finish the steps below to switch protection on'}
+      </p>
+
+      <h2>Set up</h2>
+      <ol className="steps">
+        <li className={person ? 'done' : ''}>
+          <strong>Pair with the family dashboard</strong>
+          <label>
+            Pairing code (dashboard → Devices → Pair the phone app)
+            <input value={draft} autoCapitalize="characters" autoCorrect="off" onChange={(event) => setDraft(event.target.value)} />
+          </label>
+          <button type="button" onClick={() => { const next = draft.trim(); saved.set('pairing', next); setCode(next) }}>
+            {person ? 'Paired. Pair again' : 'Pair this phone'}
+          </button>
+        </li>
+        <li className={bridge?.sms ? 'done' : ''}>
+          <strong>Allow texts and notifications</strong>
+          <p className="muted">One-time PINs, passwords and recovery codes never leave the phone. Scam Stop never sends, deletes or answers a message.</p>
+          {!bridge?.sms && <button type="button" onClick={allowTexts}>Allow</button>}
+        </li>
+        <li className={bridge?.notificationAccess ? 'done' : ''}>
+          <strong>Allow WhatsApp to be checked</strong>
+          <p className="muted">Android asks for this on its own screen: find Scam Stop in the list and switch it on.</p>
+          {!bridge?.notificationAccess && <button type="button" onClick={() => SmsInbox.openNotificationAccess()}>Open Android settings</button>}
+        </li>
+      </ol>
 
       {questions.length > 0 && (
         <>
@@ -263,36 +216,21 @@ export function PhoneApp() {
         </>
       )}
 
-      <h2>Warnings</h2>
-      {warnings.length === 0 ? <p className="muted">Nothing to worry about yet.</p> : warnings.map((warning, index) => (
-        <p key={`${warning.incident_id}-${index}`} className="warning">{warning.message}</p>
-      ))}
-
       <details>
-        <summary>Settings</summary>
-        <p>{guardian ? 'A family member approves anything that touches your bank.' : 'You decide yourself. Scam Stop asks you, and waits a day before undoing a warning.'}</p>
-        {code ? (
-          <p className="muted">Your family member can change this on the dashboard.</p>
-        ) : (
-          <button type="button" onClick={() => changeGuardian(!guardian)}>
-            {guardian ? 'I will decide myself' : 'My family will help'}
-          </button>
+        <summary>Status</summary>
+        <p className="muted">{guardian ? 'A family member approves anything that touches your bank.' : 'You decide yourself. Scam Stop asks you, and waits a day before undoing a warning.'}</p>
+        {bridge && (
+          <p className="muted">
+            {bridge.sent} messages checked{bridge.lastSent ? `, last at ${new Date(bridge.lastSent).toLocaleTimeString()}` : ''}
+            {bridge.queued > 0 ? ` · ${bridge.queued} waiting for the server` : ''}
+            {bridge.lastError ? ` · last problem: ${bridge.lastError}` : ''}
+          </p>
         )}
         <label>
           Scam Stop server
-          <input value={server} onChange={(event) => { setServer(event.target.value); saved.set('server', event.target.value); filters.current = [] }} />
+          <input value={server} onChange={(event) => { setServer(event.target.value); saved.set('server', event.target.value) }} />
         </label>
-        <label>
-          Pairing code (from the dashboard: Devices → Pair the phone app)
-          <input value={draft} autoCapitalize="characters" autoCorrect="off" onChange={(event) => setDraft(event.target.value)} />
-        </label>
-        <button type="button" onClick={() => { const next = draft.trim(); saved.set('pairing', next); setCode(next) }}>
-          Pair this phone
-        </button>
-        <p className="muted">{person ? `Watching for ${person}` : 'Not linked to anyone yet.'}</p>
-        <button type="button" onClick={sync}>Check now</button>
         <p className="muted">{status}</p>
-        <p className="muted">{counts.checked} texts sent to be checked · {counts.kept} kept on the phone</p>
       </details>
     </main>
   )

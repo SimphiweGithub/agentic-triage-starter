@@ -66,3 +66,6 @@
 }
 .phone summary { cursor: pointer; font-weight: 600; }
 .phone .muted { word-break: break-word; }
+.phone .steps { padding-left: 1.4rem; }
+.phone .steps > li { margin-bottom: 1.2rem; }
+.phone .steps > li.done > strong::after { content: ' ✓'; color: #3fb67a; }

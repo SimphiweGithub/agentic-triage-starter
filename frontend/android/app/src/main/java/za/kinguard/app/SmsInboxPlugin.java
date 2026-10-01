@@ -1,15 +1,13 @@
 package za.kinguard.app;
 
 import android.Manifest;
-import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.database.Cursor;
+import android.provider.Settings;
 import android.provider.Telephony;
-import android.telephony.SmsMessage;
 
-import androidx.core.content.ContextCompat;
+import androidx.core.app.NotificationManagerCompat;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -21,13 +19,16 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
+import org.json.JSONArray;
+
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
 
 /**
- * Reads the phone's SMS inbox and reports new texts as they arrive.
+ * Reads the phone's SMS inbox for the first sync, and sets up the native bridge (SmsReceiver and
+ * NotificationBridge) that forwards new messages to the server even when the app is closed.
  * It only reads; it never sends, deletes or changes a message.
  */
 @CapacitorPlugin(
@@ -36,20 +37,10 @@ import java.util.TimeZone;
 )
 public class SmsInboxPlugin extends Plugin {
 
-    private BroadcastReceiver receiver;
-
-    @Override
-    public void load() {
-        if (getPermissionState("sms") == PermissionState.GRANTED) {
-            listen();
-        }
-    }
-
     /** Asks for SMS access if needed. Resolves with {granted: true|false}. */
     @PluginMethod
     public void requestAccess(PluginCall call) {
         if (getPermissionState("sms") == PermissionState.GRANTED) {
-            listen();
             call.resolve(new JSObject().put("granted", true));
         } else {
             requestPermissionForAlias("sms", call, "accessAnswered");
@@ -59,10 +50,48 @@ public class SmsInboxPlugin extends Plugin {
     @PermissionCallback
     private void accessAnswered(PluginCall call) {
         boolean granted = getPermissionState("sms") == PermissionState.GRANTED;
-        if (granted) {
-            listen();
-        }
         call.resolve(new JSObject().put("granted", granted));
+    }
+
+    /** Save where the native bridge sends messages: server, person id, pairing code and the server's privacy patterns. */
+    @PluginMethod
+    public void configureBridge(PluginCall call) {
+        try {
+            JSONArray patterns = call.getArray("patterns", new com.getcapacitor.JSArray());
+            Forwarder.configure(getContext(), call.getString("server", ""), call.getString("person", ""), call.getString("code", ""), patterns);
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("Could not save the bridge settings: " + error.getMessage());
+        }
+    }
+
+    /** Whether the bridge can work, and how it is doing. */
+    @PluginMethod
+    public void bridgeStatus(PluginCall call) {
+        SharedPreferences prefs = Forwarder.prefs(getContext());
+        int queued;
+        try {
+            queued = new JSONArray(prefs.getString("queue", "[]")).length();
+        } catch (Exception error) {
+            queued = 0;
+        }
+        call.resolve(new JSObject()
+            .put("notificationAccess", NotificationManagerCompat.getEnabledListenerPackages(getContext()).contains(getContext().getPackageName()))
+            .put("sms", getPermissionState("sms") == PermissionState.GRANTED)
+            .put("configured", Forwarder.configured(getContext()))
+            .put("queued", queued)
+            .put("sent", prefs.getLong("sent", 0))
+            .put("lastSent", prefs.getString("lastSent", ""))
+            .put("lastError", prefs.getString("lastError", "")));
+    }
+
+    /** Opens Android's notification access screen. Android only lets the person switch this on themselves. */
+    @PluginMethod
+    public void openNotificationAccess(PluginCall call) {
+        Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(intent);
+        call.resolve();
     }
 
     /** Received texts newer than `since` (milliseconds), oldest first, at most `limit`. */
@@ -86,29 +115,6 @@ public class SmsInboxPlugin extends Plugin {
         call.resolve(new JSObject().put("messages", messages));
     }
 
-    /** Hear each new text the moment it arrives, while the app is running. */
-    private void listen() {
-        if (receiver != null) {
-            return;
-        }
-        receiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                SmsMessage[] parts = Telephony.Sms.Intents.getMessagesFromIntent(intent);
-                if (parts == null || parts.length == 0) {
-                    return;
-                }
-                StringBuilder body = new StringBuilder();  // a long text arrives in several parts
-                for (SmsMessage part : parts) {
-                    body.append(part.getMessageBody());
-                }
-                notifyListeners("smsReceived", message(parts[0].getOriginatingAddress(), body.toString(), parts[0].getTimestampMillis()));
-            }
-        };
-        ContextCompat.registerReceiver(getContext(), receiver, new IntentFilter(Telephony.Sms.Intents.SMS_RECEIVED_ACTION),
-            ContextCompat.RECEIVER_EXPORTED);
-    }
-
     private static JSObject message(String sender, String text, long millis) {
         return new JSObject()
             .put("sender", sender == null ? "" : sender)
@@ -122,13 +128,5 @@ public class SmsInboxPlugin extends Plugin {
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
         format.setTimeZone(TimeZone.getTimeZone("UTC"));
         return format.format(new Date(millis));
-    }
-
-    @Override
-    protected void handleOnDestroy() {
-        if (receiver != null) {
-            getContext().unregisterReceiver(receiver);
-            receiver = null;
-        }
     }
 }
