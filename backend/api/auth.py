@@ -27,7 +27,13 @@ def dev_open() -> bool:
 
 
 def who(request: Request) -> str:
-    """The Clerk user id behind the request's session token, or 401."""
+    """The Clerk user id behind the request's session token, or 401. A paired phone sends its pairing code instead."""
+    code = request.headers.get("x-device-key")
+    if code:
+        user_id = get_store().phone_user(code)
+        if user_id is None:
+            raise HTTPException(401, "This phone is not paired any more. Ask for a new pairing code.")
+        return user_id  # linked to one person as role "person", so it reaches only that person's own routes
     if dev_open():
         return request.headers.get("x-dev-user", "dev")  # lets a developer act as different people without Clerk
     secret = os.getenv("CLERK_SECRET_KEY")

@@ -21,7 +21,7 @@ app = FastAPI(title="Scam Stop API", version="0.2.0",
 # lists its own address in CORS_ORIGINS, for example http://localhost:5173 (comma separated).
 origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()]
 if origins:
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"])
+    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization", "X-Device-Key"])
 
 app.include_router(open_router, prefix="/api")      # /api/health
 app.include_router(people_router, prefix="/api")    # /api/me, /api/people, /api/invites

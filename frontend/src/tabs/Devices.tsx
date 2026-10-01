@@ -1,4 +1,6 @@
 import { Plus } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { api, post, scoped } from '@/api'
 import { DeviceIcon } from '@/components/status'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -43,6 +45,7 @@ export function Devices({ state, mailboxes, devices, onOpenDevice, onAddDevice, 
       </header>
 
       <Mailboxes mailboxes={mailboxes} onInvite={onInvite} />
+      <PhonePairing />
 
       <Alert>
         <AlertDescription className="font-bold text-info">
@@ -194,5 +197,53 @@ function Activity({ state }: { state: KinGuardState }) {
         )
       })}
     </ul>
+  )
+}
+
+/** Pairs the Scam Stop Android app with this person. The phone cannot sign in, so it uses a code instead. */
+function PhonePairing() {
+  const [pairedAt, setPairedAt] = useState<string | null>(null)
+  const [code, setCode] = useState<string | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api<{ paired_at: string | null }>(scoped('/phone'))
+      .then((answer) => setPairedAt(answer.paired_at))
+      .catch(() => undefined)
+  }, [])
+
+  async function pair() {
+    try {
+      const answer = await post<{ code: string }>(scoped('/phone'))
+      setCode(answer.code)
+      setPairedAt(new Date().toISOString())
+      setError('')
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure))
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg font-bold">{PERSON.name}’s phone app</CardTitle>
+        <CardDescription>
+          The Scam Stop app on {PERSON.name}’s Android phone reads their texts. It pairs with a code instead of signing in. A new code unpairs the previous phone.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <p className="text-sm text-muted-foreground">{pairedAt ? `A phone was paired on ${formatTime(pairedAt)}.` : 'No phone is paired yet.'}</p>
+        {code && (
+          <div className="grid gap-1 rounded-lg bg-muted p-4">
+            <span className="text-sm text-muted-foreground">Type this into the app under Settings → Pairing code. It is shown only once.</span>
+            <code className="text-2xl font-bold tracking-wider select-all">{code}</code>
+          </div>
+        )}
+        {error && <p className="text-sm text-warn">{error}</p>}
+        <Button variant={pairedAt ? 'outline' : 'default'} className="h-11 w-fit px-5 text-base" onClick={pair}>
+          {pairedAt ? 'Pair a new phone' : 'Pair the phone app'}
+        </Button>
+      </CardContent>
+    </Card>
   )
 }

@@ -678,6 +678,30 @@ class AccessTests(unittest.TestCase):
         self.user = "caregiver_1"
         self.assertEqual(len(self.client.get(f"/api/people/{person_id}/state").json()["reports"]), 1)
 
+    def test_a_paired_phone_reaches_only_its_own_persons_view(self):
+        mine = self.add_person("Thandi")
+        theirs = self.add_person("Sipho", as_user="caregiver_2")
+        self.user = "caregiver_1"
+        code = self.client.post(f"/api/people/{mine}/phone").json()["code"]
+        self.assertIsNotNone(self.client.get(f"/api/people/{mine}/phone").json()["paired_at"])
+        app.dependency_overrides.clear()  # the phone has no Clerk session, only its pairing code
+        self.assertRegex(code, r"^[A-HJ-NP-Z2-9]{10}$")
+        phone = {"X-Device-Key": f" {code[:5].lower()}-{code[5:]} "}  # typed loosely on a phone, still accepted
+        me = self.client.get("/api/me", headers=phone).json()
+        self.assertEqual((me["role"], me["person"]["id"]), ("person", mine))
+        sync = self.client.post(f"/api/people/{mine}/intake/share/batch", headers=phone,
+                                json=[{"text": DEBIT, "sender": "YourBank", "timestamp": "2026-10-02T06:00:00"}])
+        self.assertEqual(sync.status_code, 200)
+        self.assertEqual(self.client.get(f"/api/people/{mine}/person/state", headers=phone).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/people/{mine}/state", headers=phone).status_code, 403)       # the caregiver's view
+        self.assertEqual(self.client.post(f"/api/people/{mine}/settings/guardian", headers=phone, json={"enrolled": False}).status_code, 403)
+        self.assertEqual(self.client.get(f"/api/people/{theirs}/outbox", headers=phone).status_code, 404)    # someone else
+        self.assertEqual(self.client.get("/api/me", headers={"X-Device-Key": "wrong"}).status_code, 401)
+        app.dependency_overrides[auth.who] = lambda: self.user
+        self.client.post(f"/api/people/{mine}/phone")  # a new code unpairs the old phone
+        app.dependency_overrides.clear()
+        self.assertEqual(self.client.get("/api/me", headers=phone).status_code, 401)
+
     def test_the_person_connects_through_a_single_use_invite(self):
         person_id = self.add_person()
         token = self.client.post(f"/api/people/{person_id}/invites").json()["token"]

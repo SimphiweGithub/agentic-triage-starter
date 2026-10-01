@@ -2,6 +2,7 @@
 
 Incidents and reviews are saved separately, one JSON file per person (core/store.py).
 """
+import hashlib
 import os
 import secrets
 import sqlite3
@@ -11,6 +12,7 @@ from pathlib import Path
 
 DEFAULT_PATH = Path(__file__).resolve().parents[1] / "kinguard.db"
 INVITE_DAYS = 7
+CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no O, 0, I or 1, which look alike
 OUTAGE_MINUTES = 15  # a temporary Gmail failure only becomes a problem after this long
 
 SCHEMA = """
@@ -29,6 +31,9 @@ CREATE TABLE IF NOT EXISTS mailboxes (
 CREATE TABLE IF NOT EXISTS scanned (
     mailbox_id TEXT NOT NULL, message_id TEXT NOT NULL, verdict TEXT NOT NULL, at TEXT NOT NULL,
     PRIMARY KEY (mailbox_id, message_id));
+CREATE TABLE IF NOT EXISTS phones (
+    key_hash TEXT PRIMARY KEY, person_id TEXT NOT NULL, user_id TEXT NOT NULL, created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL, revoked_at TEXT);
 """
 
 
@@ -54,7 +59,7 @@ class Store:
     def reset(self) -> None:
         """Empty every table. For tests."""
         with self.lock:
-            for table in ("people", "links", "invites", "mailboxes", "scanned"):
+            for table in ("people", "links", "invites", "mailboxes", "scanned", "phones"):
                 self.db.execute(f"DELETE FROM {table}")
             self.db.commit()
 
@@ -135,7 +140,8 @@ class Store:
                 raise ValueError(problem)
             person_id = invite["person_id"]
             self.db.execute("UPDATE invites SET accepted_at = ? WHERE token = ?", (stamp(now()), token))
-            self.db.execute("DELETE FROM links WHERE person_id = ? AND role = 'person' AND user_id != ?", (person_id, user_id))
+            self.db.execute("DELETE FROM links WHERE person_id = ? AND role = 'person' AND user_id != ? AND user_id NOT LIKE 'phone:%'",
+                            (person_id, user_id))  # a paired phone stays paired when the person connects Gmail
             self.db.execute("INSERT OR REPLACE INTO links VALUES (?, ?, 'person')", (person_id, user_id))
             self.db.execute("DELETE FROM scanned WHERE mailbox_id IN (SELECT id FROM mailboxes WHERE person_id = ? AND kind = 'gmail')", (person_id,))
             self.db.execute("DELETE FROM mailboxes WHERE person_id = ? AND kind = 'gmail'", (person_id,))  # one Gmail per person for now
@@ -191,6 +197,33 @@ class Store:
             self.db.execute("UPDATE mailboxes SET status = ?, last_error = ?, failing_since = ? WHERE id = ?", (status, reason, since, mailbox_id))
             self.db.commit()
 
+    # ---- the person's paired phone ----
+
+    def pair_phone(self, person_id: str, created_by: str) -> str:
+        """A new pairing code for the person's phone. Only its hash is kept; an earlier phone is unpaired."""
+        with self.lock:
+            code = "".join(secrets.choice(CODE_LETTERS) for _ in range(10))  # about 50 bits; easy to type on a phone
+            user_id = f"phone:{secrets.token_hex(4)}"
+            for row in self._all("SELECT user_id FROM phones WHERE person_id = ? AND revoked_at IS NULL", (person_id,)):
+                self.db.execute("DELETE FROM links WHERE user_id = ?", (row["user_id"],))
+            self.db.execute("UPDATE phones SET revoked_at = ? WHERE person_id = ? AND revoked_at IS NULL", (stamp(now()), person_id))
+            self.db.execute("INSERT INTO phones VALUES (?, ?, ?, ?, ?, NULL)", (_hash(code), person_id, user_id, created_by, stamp(now())))
+            self.db.execute("INSERT INTO links VALUES (?, ?, 'person')", (person_id, user_id))
+            self.db.commit()
+            return code
+
+    def phone_user(self, code: str) -> str | None:
+        """The user id a pairing code stands for, or None if it is unknown or was replaced."""
+        with self.lock:
+            row = self._one("SELECT user_id FROM phones WHERE key_hash = ? AND revoked_at IS NULL", (_hash(code),))
+            return row["user_id"] if row else None
+
+    def phone_paired(self, person_id: str) -> str | None:
+        """When the person's current phone was paired, or None."""
+        with self.lock:
+            row = self._one("SELECT created_at FROM phones WHERE person_id = ? AND revoked_at IS NULL", (person_id,))
+            return row["created_at"] if row else None
+
     # ---- what has been scanned (an id and a verdict, never the message) ----
 
     def seen(self, mailbox_id: str, message_id: str) -> bool:
@@ -201,6 +234,11 @@ class Store:
         with self.lock:
             self.db.execute("INSERT OR IGNORE INTO scanned VALUES (?, ?, ?, ?)", (mailbox_id, message_id, verdict, stamp(now())))
             self.db.commit()
+
+
+def _hash(code: str) -> str:
+    """Codes are compared without spaces, dashes or case, so `ab3k-7q2m` typed on a phone still matches."""
+    return hashlib.sha256("".join(code.split()).replace("-", "").upper().encode("utf-8")).hexdigest()
 
 
 def invite_problem(invite: dict | None) -> str | None:

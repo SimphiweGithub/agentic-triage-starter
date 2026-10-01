@@ -100,6 +100,18 @@ def cancel_invite(person_id: str, token: str, _: Caller = Depends(caregiver_of))
     return {"status": "cancelled"}
 
 
+@router.post("/people/{person_id}/phone", status_code=201)
+def pair_phone(person_id: str, me: Caller = Depends(caregiver_of)):
+    """A pairing code for the person's phone app. Shown once; a new code unpairs the previous phone."""
+    return {"code": get_store().pair_phone(person_id, me.user_id)}
+
+
+@router.get("/people/{person_id}/phone")
+def phone(person_id: str, _: Caller = Depends(caregiver_of)):
+    """Whether a phone is paired, and when. Never the code."""
+    return {"paired_at": get_store().phone_paired(person_id)}
+
+
 @router.get("/invites/{token}")
 def look_at_invite(token: str):
     """What the person sees before signing in. No sign-in needed; it reveals only the name and whether the link works."""

@@ -33,7 +33,9 @@ interface Dispute {
 /** The protected person's phone: reads texts, sends them to the Scam Stop server, shows warnings and, with no guardian, asks them. */
 export function PhoneApp() {
   const [server, setServer] = useState(() => saved.get('server', 'http://localhost:8000'))
-  const [person, setPerson] = useState(() => saved.get('person', '')) // the person id from the dashboard
+  const [code, setCode] = useState(() => saved.get('pairing', '')) // from the dashboard: Devices → Pair the phone app
+  const [draft, setDraft] = useState(code) // what is typed; it becomes the code only on "Pair this phone"
+  const [person, setPerson] = useState('') // whose phone this is, as the server says
   const [personChecked, setPersonChecked] = useState(false) // nothing is sent until we know whose phone this is
   const [consented, setConsented] = useState(() => saved.get('consented', '') === 'yes')
   const [granted, setGranted] = useState(false)
@@ -52,14 +54,14 @@ export function PhoneApp() {
       const base = person && !shared ? `${server}/api/people/${encodeURIComponent(person)}` : `${server}/api`
       const response = await fetch(`${base}${path}`, {
         method: body === undefined ? 'GET' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(code ? { 'X-Device-Key': code } : {}) },
         body: body === undefined ? undefined : JSON.stringify(body),
       })
       const answer = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(typeof answer.detail === 'string' ? answer.detail : `server answered ${response.status}`)
       return answer as T
     },
-    [server, person],
+    [server, person, code],
   )
 
   /** Never let a one-time code or password leave the phone: the server's own filter, applied here first. */
@@ -118,6 +120,7 @@ export function PhoneApp() {
       setGuardian(mine.guardian)
       setQuestions(mine.guardian ? [] : pending)
       setDisputes(mine.disputes)
+      setStatus((before) => (before.startsWith('Could not load') ? '' : before))
       setNow(Date.now())
     } catch (error) {
       setStatus(`Could not load warnings: ${error instanceof Error ? error.message : String(error)}`)
@@ -148,25 +151,22 @@ export function PhoneApp() {
     await refresh()
   }
 
-  // With no person id set, ask the server whose phone this is. In development mode the caregiver's first
-  // person is used; once anyone is being looked after, the shared routes no longer answer.
+  // Ask the server whose phone this is. Paired, the code names the person. Without a code (development
+  // mode only) the first person the developer looks after is used.
   useEffect(() => {
-    if (person) {
-      setPersonChecked(true)
-      return
-    }
-    fetch(`${server}/api/me`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((me: { people?: { id: string }[] } | null) => {
-        const first = me?.people?.[0]?.id
-        if (first) {
-          saved.set('person', first)
-          setPerson(first)
-        }
+    setPersonChecked(false)
+    fetch(`${server}/api/me`, { headers: code ? { 'X-Device-Key': code } : {} })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(response.status === 401 ? 'This pairing code is not accepted. Ask for a new one.' : `server answered ${response.status}`)
+        return response.json()
       })
-      .catch(() => undefined)
+      .then((me: { person?: { id: string } | null; people?: { id: string }[] }) => {
+        setPerson(me.person?.id ?? me.people?.[0]?.id ?? '')
+        setStatus('')
+      })
+      .catch((error) => setStatus(error instanceof Error ? error.message : String(error)))
       .finally(() => setPersonChecked(true))
-  }, [server, person])
+  }, [server, code])
 
   // On start: if consent was given before, check access quietly.
   useEffect(() => {
@@ -271,17 +271,25 @@ export function PhoneApp() {
       <details>
         <summary>Settings</summary>
         <p>{guardian ? 'A family member approves anything that touches your bank.' : 'You decide yourself. Scam Stop asks you, and waits a day before undoing a warning.'}</p>
-        <button type="button" onClick={() => changeGuardian(!guardian)}>
-          {guardian ? 'I will decide myself' : 'My family will help'}
-        </button>
+        {code ? (
+          <p className="muted">Your family member can change this on the dashboard.</p>
+        ) : (
+          <button type="button" onClick={() => changeGuardian(!guardian)}>
+            {guardian ? 'I will decide myself' : 'My family will help'}
+          </button>
+        )}
         <label>
           Scam Stop server
           <input value={server} onChange={(event) => { setServer(event.target.value); saved.set('server', event.target.value); filters.current = [] }} />
         </label>
         <label>
-          Person id (filled in from the dashboard; change it only to watch someone else)
-          <input value={person} onChange={(event) => { setPerson(event.target.value.trim()); saved.set('person', event.target.value.trim()) }} />
+          Pairing code (from the dashboard: Devices → Pair the phone app)
+          <input value={draft} autoCapitalize="characters" autoCorrect="off" onChange={(event) => setDraft(event.target.value)} />
         </label>
+        <button type="button" onClick={() => { const next = draft.trim(); saved.set('pairing', next); setCode(next) }}>
+          Pair this phone
+        </button>
+        <p className="muted">{person ? `Watching for ${person}` : 'Not linked to anyone yet.'}</p>
         <button type="button" onClick={sync}>Check now</button>
         <p className="muted">{status}</p>
         <p className="muted">{counts.checked} texts sent to be checked · {counts.kept} kept on the phone</p>
