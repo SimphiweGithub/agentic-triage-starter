@@ -229,7 +229,7 @@ South African messages labelled as scam or not by someone outside the team.
 
 - The gate on South African messages labelled by someone outside the team.
 - Jev's 0.7 cut-off, which has never been tuned.
-- The live mailbox against a real mailbox, and the WhatsApp webhook against a real gateway.
+- The live mailbox against a real mailbox.
 
 ## 7. Known limitations
 

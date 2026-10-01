@@ -11,10 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import urlencode
 
 from fastapi.testclient import TestClient
-from twilio.request_validator import RequestValidator
 
 from core.correlator import Correlator
 from core.fsm import transition_state
@@ -783,24 +781,6 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.client.post(f"/api/people/{person_id}/incidents/{sent['incident_id']}/feedback", json={"legitimate": False}).status_code, 200)
         self.assertEqual(self.client.get(f"/api/people/{person_id}/outbox").json(), [])
 
-    def test_the_whatsapp_gateway_names_the_person_it_serves(self):
-        first = self.add_person("Thandi")
-        second = self.add_person("Sipho")
-        app.dependency_overrides.clear()                                  # the gateway has no session
-        fields = {"From": "whatsapp:+27821234567", "Body": DEBIT}
-        body = urlencode(fields)
-        url = f"http://testserver/api/people/{first}/intake/whatsapp"
-        with patch.dict(os.environ, {"TWILIO_AUTH_TOKEN": "test-token", "TWILIO_PUBLIC_ORIGIN": "http://testserver"}):
-            self.assertEqual(self.client.post(url, content=body).status_code, 403)
-            signature = RequestValidator("test-token").compute_signature(url, fields)
-            self.assertEqual(self.client.post(url, content=body, headers={"X-Twilio-Signature": signature}).status_code, 200)
-            missing = "http://testserver/api/people/Pnobody/intake/whatsapp"
-            signature = RequestValidator("test-token").compute_signature(missing, fields)
-            self.assertEqual(self.client.post(missing, content=body, headers={"X-Twilio-Signature": signature}).status_code, 404)
-        self.assertEqual(len(pool.runtime_for(first).reports), 1)
-        self.assertEqual(len(pool.runtime_for(second).reports), 0)
-
-
 class WorldIsolationTests(unittest.TestCase):
     def test_a_runtime_with_its_own_world_never_touches_the_shared_one_or_another(self):
         lure = take_in_email  # the same email, processed for two people
@@ -1097,19 +1077,6 @@ class WhatsAppAndNewScamTests(unittest.TestCase):
     def test_advance_fee_wording_is_flagged(self):
         text = "Your inheritance is ready for release once the clearance fee is paid."
         self.assertEqual(gate(text, extract_signals(text, {})).threat, ThreatDomain.ADVANCE_FEE)
-
-    def test_whatsapp_webhook_takes_in_the_message_and_never_replies(self):
-        body = "From=whatsapp%3A%2B27825550199&Body=Hi+mom+this+is+my+new+number.+Please+send+R2000+today."
-        response = self.client.post("/api/intake/whatsapp", content=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.text, "<Response></Response>")
-        state = self.client.get("/api/state").json()
-        self.assertEqual(state["reports"][0]["source"], "whatsapp")
-        self.assertEqual(state["reports"][0]["metadata"]["sender"], "+27825550199")
-        self.assertEqual(state["incidents"][0]["labels"]["threat"], "IMPERSONATION")
-        empty = self.client.post("/api/intake/whatsapp", content="From=whatsapp%3A%2B27825550199&Body=", headers={"Content-Type": "application/x-www-form-urlencoded"})
-        self.assertEqual(empty.status_code, 200)
-        self.assertEqual(len(self.client.get("/api/state").json()["reports"]), 1)
 
     def test_guardian_brief_is_plain_and_links_to_whatsapp(self):
         self.assertEqual(self.client.get("/api/guardian/briefs").json(), [])

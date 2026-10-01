@@ -15,7 +15,7 @@ Never add a `Co-Authored-By: Codex ...` trailer or any other self-attribution to
 - Matching text alone never makes a duplicate. `core/correlator.py` links by explicit link, shared identifier, then guarded fuzzy text.
 - Human review is a hold on the incident. It clears only when no review is pending and `domain.logic.risk_persists` returns false.
 - One decision per kept input row. Parse and processing failures become `PENDING_REVIEW` decisions. One-time codes are discarded before storage.
-- Every route except `/health` and the WhatsApp webhook needs a Clerk session (`api/auth.py`). A caregiver never reads the protected person's mail: the person connects their own Gmail from an invite link, `api/scanner.py` reads it, and safe mail is kept only as an id and a verdict. `KINGUARD_DEV_OPEN=1` skips sign-in for local use only.
+- Every route except `/health` and the invite preview needs a Clerk session (`api/auth.py`). A caregiver never reads the protected person's mail: the person connects their own Gmail from an invite link, `api/scanner.py` reads it, and safe mail is kept only as an id and a verdict. `KINGUARD_DEV_OPEN=1` skips sign-in for local use only.
 - Keep domain rules, thresholds and tools in `domain/`; keep `core/` domain-neutral.
 
 ## Working rules

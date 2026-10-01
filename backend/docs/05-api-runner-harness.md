@@ -6,32 +6,32 @@ The ways into the engine, the way to score it, and the optional model code.
 
 ## `main.py`
 
-- **Lines 1–13** — imports, including the routers from `api/routes.py` and
+- **Lines 1–14** — imports, including the routers from `api/routes.py` and
   `api/people.py`, the background scanners from `api/scanner.py`, and the store.
-- **Line 15** — `ROOT` is the folder this file is in.
-- **Lines 16–17** — `app` is the web application, with a title and description
+- **Line 16** — `ROOT` is the folder this file is in.
+- **Lines 17–18** — `app` is the web application, with a title and description
   that appear in the generated documentation at `/docs`.
-- **Lines 21–23** — cross-origin access. `CORS_ORIGINS` is read from the
+- **Lines 20–24** — cross-origin access. `CORS_ORIGINS` is read from the
   environment and split on commas into `origins`. If the list is empty, which
   is the default, no cross-origin middleware is added and a page served from
   anywhere else cannot call the API. If addresses are listed, only those may
   call it, only with GET and POST, and only with the `Content-Type` and
   `Authorization` headers. `Authorization` carries the Clerk session token
-  that every route except `/health` and the WhatsApp webhook needs.
-- **Lines 25–31** — health and people routes are served under `/api`.
-  Gateway, person and caregiver routes are served under `/api/people/{person_id}`;
+  that every route except `/health` and the invite preview needs.
+- **Lines 26–31** — health and people routes are served under `/api`.
+  Person and caregiver routes are served under `/api/people/{person_id}`;
   development mode also exposes unscoped console routes under `/api`.
-- **Line 28** — open the store (`api/store.py`).
-- **Lines 29–31** — if the server has its own IMAP mailbox, list it under the
+- **Line 33** — open the store (`api/store.py`).
+- **Lines 34–36** — if the server has its own IMAP mailbox, list it under the
   first protected person only. A first person added later gets it in `api/people.py`.
-- **Line 32** — start the live mailbox thread. It does nothing unless
+- **Line 37** — start the live mailbox thread. It does nothing unless
   `IMAP_HOST` is set. Each email goes through `forwarded_handler`, so it is
   kept under the same retention rules as Gmail, and each check's result is
   written to the mailbox's status by `note_forwarded`.
-- **Line 33** — start the Gmail scanner. It does nothing unless
+- **Line 38** — start the Gmail scanner. It does nothing unless
   `CLERK_SECRET_KEY` is set.
-- **Line 34** — the `static` folder is served under `/static`.
-- **Lines 37–40** — the address `/` returns a plain developer console for
+- **Line 39** — the `static` folder is served under `/static`.
+- **Lines 42–45** — the address `/` returns a plain developer console for
   watching the engine. The product front end is built separately. The console
   cannot sign in, so it only works with `KINGUARD_DEV_OPEN=1` (see `api/auth.py`).
 
@@ -41,22 +41,21 @@ The ways into the engine, the way to score it, and the optional model code.
 
 The contract for the front end is in `API.md`. This section explains the code.
 
-**Lines 24–28** — four routers, by who may call them:
-- `router` (line 24) needs a caregiver linked to the person in the path.
-- `person_router` (line 25) accepts that caregiver or the protected person:
+**Lines 19–22** — three routers and the shared development runtime:
+- `router` (line 19) needs a caregiver linked to the person in the path.
+- `person_router` (line 20) accepts that caregiver or the protected person:
   outbox, feedback and reviews addressed to the person.
-- `open_router` (line 26) needs no session: `GET /health`.
-- `gateway_router` (line 27) accepts signed Twilio webhooks without a Clerk session.
+- `open_router` (line 21) needs no session: `GET /health`.
+- `runtime` (line 22) is the shared development console runtime.
 
 Each `dependencies=[Depends(...)]` runs `api/auth.py` before the route body.
-Line 13 imports the scoped role checks from there.
+Line 9 imports the scoped role checks from there.
 
-**Lines 28–38** — `runtime` is the shared development console runtime.
-`caregiver_runtime` and `member_runtime` select the separate in-memory runtime
+**Lines 25–32** — `caregiver_runtime` and `member_runtime` select the separate in-memory runtime
 for the person in the URL. Restarting clears incidents and reviews, while
 `api/store.py` persists people, invites and mailboxes.
 
-### Request and response shapes (lines 28–70)
+### Request and response shapes (lines 35–77)
 
 Each class describes a JSON body. FastAPI rejects a request that does not
 fit, with error 422, before any of our code runs.
@@ -72,18 +71,18 @@ fit, with error 422, before any of our code runs.
 - `Withheld` — the reply when a message is discarded: `status` and `reason`.
 - `PersonMessage` — one warning for the person: `incident_id` and `message`.
 
-### Helpers (lines 73–83)
+### Helpers (lines 80–95)
 
-- **73–74 `_now`** — the current UTC time as text.
-- **86–88 `take_in_email`** — one raw email in, one decision out. The API
+- **80–81 `_now`** — the current UTC time as text.
+- **93–95 `take_in_email`** — one raw email in, one decision out. The API
   route and the live mailbox both call it, so they cannot behave differently.
-- **77–83 `_take_in`** — the shared path for live intake:
-  - **79–81** — ask the domain whether the row must be withheld. If so, return
+- **84–90 `_take_in`** — the shared path for live intake:
+  - **86–88** — ask the domain whether the row must be withheld. If so, return
     a `Withheld` reply and store nothing.
-  - **82** — parse it safely. The number passed in comes from
+  - **89** — parse it safely. The number passed in comes from
     `runtime.next_report_number()`, which is never reused, so a report ID made
     from it cannot collide even after the scanner forgets safe mail.
-  - **83** — process it safely. A decision always comes back.
+  - **90** — process it safely. A decision always comes back.
 
 ### Endpoints
 
@@ -94,67 +93,50 @@ reply is sent.
 
 | Lines | Method and path | Group | What it does |
 |---|---|---|---|
-| 106–109 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
-| 112–115 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
-| 118–139 | `POST /intake/whatsapp` | intake (signed gateway) | Validate Twilio's signature, then take in the message |
-| 142–148 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
-| 153–157 | `GET /outbox` | person | Warnings not yet answered by the person |
-| 160–170 | `POST /incidents/{id}/feedback` | person | Only the person may answer about their incident |
-| 175–178 | `GET /incidents` | caregiver | Every incident |
-| 181–191 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
-| 194–199 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
-| 202–206 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
-| 209–213 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
-| 216–219 | `GET /person/reviews` | person | Only reviews addressed to the protected person |
-| 222–233 | `POST /reviews/{id}/decision` | person or caregiver | Only the addressed role may approve or reject |
-| 236–244 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
-| 249–254 | `GET /health` | system | Confirms the server is up and optional parts. No session needed |
-| 257–262 | `GET /state` | system | Everything in one call, plus the simulated world |
-| 265–269 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
-| 272–276 | `POST /reset` | system | Empty this person's runtime |
-| 279–286 | `POST /replay` | system | Reset, then process a list of reports |
-| 289–297 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 300–304 | `POST /replay/step` | system | Process the next messages in the queue |
+| 100–103 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
+| 106–109 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in |
+| 112–118 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
+| 123–127 | `GET /outbox` | person | Warnings not yet answered by the person |
+| 130–140 | `POST /incidents/{id}/feedback` | person | Only the person may answer about their incident |
+| 145–148 | `GET /incidents` | caregiver | Every incident |
+| 151–161 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
+| 164–169 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
+| 172–176 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
+| 179–183 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
+| 186–189 | `GET /person/reviews` | person | Only reviews addressed to the protected person |
+| 192–203 | `POST /reviews/{id}/decision` | person or caregiver | Only the addressed role may approve or reject |
+| 206–214 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
+| 219–224 | `GET /health` | system | Confirms the server is up and optional parts. No session needed |
+| 227–232 | `GET /state` | system | Everything in one call, plus the simulated world |
+| 235–239 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled |
+| 242–246 | `POST /reset` | system | Empty this person's runtime |
+| 249–256 | `POST /replay` | system | Reset, then process a list of reports |
+| 259–267 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 270–274 | `POST /replay/step` | system | Process the next messages in the queue |
 
-**`feedback` in detail (160–170)**
-- **163–164** — only the protected person may answer outside development mode.
-- **165–166** — unknown incident: error 404.
-- **167** — a sentence describing the answer.
-- **168–169** — the answer is wrapped as a `RawInputReport` with `source`
+**`feedback` in detail (130–140)**
+- **133–134** — only the protected person may answer outside development mode.
+- **135–136** — unknown incident: error 404.
+- **137** — a sentence describing the answer.
+- **138–139** — the answer is wrapped as a `RawInputReport` with `source`
   `"person"`. Its metadata names the incident (so the correlator links it
   explicitly) and carries the `feedback` value.
-- **170** — it is processed like any other message. The person's answer is
+- **140** — it is processed like any other message. The person's answer is
   evidence that goes through the same policy; it is not a command.
 
-**`intake_whatsapp` in detail (118–139)**
-- **121** — parse Twilio's form body, including every field Twilio sent.
-- **122–132** — outside development mode, require `TWILIO_AUTH_TOKEN` and
-  validate `X-Twilio-Signature` using Twilio's SDK. `TWILIO_PUBLIC_ORIGIN`
-  supplies the external host and scheme when a proxy changes the request URL;
-  path and query are kept in the signed URL. An invalid signature returns 403.
-- **133–135** — choose the named person's runtime, or return 404.
-- **136** — `text` is the message; `sender` is the number, with the
-  `whatsapp:` prefix removed.
-- **137–138** — an empty message is ignored; otherwise it goes through the
-  same `_take_in` path as a shared SMS, with the channel set to `whatsapp`.
-- **139** — reply with an empty response. A gateway would send any text in the
-  reply back to the sender, and the agent must never answer a scammer.
-
-The tests sign simulated Twilio posts; a live gateway has not been verified.
-
-**`guardian_briefs` in detail (209–213)** — for every review that is
+**`guardian_briefs` in detail (179–183)** — for every review that is
 `PENDING` and addressed to the `CAREGIVER`, build a brief from the review and
 the decision that opened it.
 
-**`reviews` in detail (202–206)** — `status` and `audience` are optional query
+**`reviews` in detail (172–176)** — `status` and `audience` are optional query
 parameters. `?status=PENDING&audience=PERSON` returns what is waiting for the
 person themselves; with nothing, every review is returned.
 
-**`replay_load` in detail (289–297)**
-- **292** — strip an invisible marker from the start of the text, read the
+**`replay_load` in detail (259–267)**
+- **262** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **293–294** — an unsupported file type returns error 400.
-- **295** — parse every row safely and hand the list to the runtime's queue.
+- **263–264** — an unsupported file type returns error 400.
+- **265** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.
@@ -298,8 +280,8 @@ because the person can also remove access in their Google account.
 ## `api/auth.py`
 
 Who is calling. Clerk proves who the user is; the store says which person they
-are linked to and in what role. Every route except `/health` and the WhatsApp
-webhook goes through here.
+are linked to and in what role. Every route except `/health` and the invite
+preview goes through here.
 
 - **13–17 `Caller`** — the user's Clerk id, their `role` (`caregiver`,
   `person`, or `None` before they are linked to anyone) and the person they are

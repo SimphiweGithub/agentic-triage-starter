@@ -11,8 +11,7 @@ approve or reject.
   gets `{id}` from `GET /me` (`people`); the protected person gets their own id
   from `GET /me` (`person`). Only development mode exposes unscoped calls.
 - Interactive documentation with every schema: `http://127.0.0.1:8000/docs`
-- API bodies are JSON, except the form-encoded WhatsApp webhook. Every route except `GET /health`,
-  `GET /invites/{token}` and `POST /intake/whatsapp`
+- API bodies are JSON. Every route except `GET /health` and `GET /invites/{token}`
   needs a signed-in Clerk session: `Authorization: Bearer <token>` (see
   [Signing in and roles](#signing-in-and-roles)).
 - Incidents and reviews are in memory per person. Restarting the server, or that person's
@@ -219,16 +218,6 @@ delivered at once.
 | `404` | The incident, review or decision does not exist |
 | `409` | Not allowed right now: a review already decided, or still in its cooling-off period |
 | `422` | The body does not match the schema; the response says which field |
-
-## WhatsApp gateway (optional)
-
-`POST /people/{id}/intake/whatsapp` accepts Twilio's form fields (`From` and
-`Body`). Set `TWILIO_AUTH_TOKEN` in `backend/.env`; outside development mode,
-requests without a valid `X-Twilio-Signature` receive `403`, and an unset token
-returns `503`. Set `TWILIO_PUBLIC_ORIGIN` to the public scheme and host Twilio
-calls when a proxy changes the request's internal URL. The validator uses the
-full path, query string and all form fields. This has only been tested with
-signed simulated posts, not a live gateway. [Twilio's signature guidance](https://www.twilio.com/docs/usage/webhooks/webhooks-security).
 
 ## Live inbox
 
