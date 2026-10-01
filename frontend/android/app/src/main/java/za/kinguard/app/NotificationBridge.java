@@ -1,6 +1,8 @@
 package za.kinguard.app;
 
 import android.app.Notification;
+import android.content.ComponentName;
+import android.content.Context;
 import android.os.Bundle;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
@@ -27,6 +29,28 @@ public class NotificationBridge extends NotificationListenerService {
         APPS.put("org.thoughtcrime.securesms", "signal");
     }
     private static final Pattern SUMMARY = Pattern.compile("^\\d+ new messages?( from \\d+ chats?)?$|^Checking for new messages$", Pattern.CASE_INSENSITIVE);
+
+    /** Ask Android to connect the listener again. It drops it when the app is updated and does not always come back by itself. */
+    static void rebind(Context context) {
+        requestRebind(new ComponentName(context, NotificationBridge.class));
+    }
+
+    @Override
+    public void onListenerDisconnected() {
+        rebind(this);
+    }
+
+    /** On connecting, check what is already in the tray: messages that came while the listener was away. Repeats are skipped. */
+    @Override
+    public void onListenerConnected() {
+        try {
+            for (StatusBarNotification posted : getActiveNotifications()) {
+                onNotificationPosted(posted);
+            }
+        } catch (RuntimeException ignored) {
+            // Android can refuse while it is still connecting; new messages still arrive as usual
+        }
+    }
 
     @Override
     public void onNotificationPosted(StatusBarNotification posted) {

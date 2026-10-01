@@ -37,6 +37,14 @@ import java.util.TimeZone;
 )
 public class SmsInboxPlugin extends Plugin {
 
+    /** On every start, make sure Android has the notification listener connected (it can drop it after an update). */
+    @Override
+    public void load() {
+        if (NotificationManagerCompat.getEnabledListenerPackages(getContext()).contains(getContext().getPackageName())) {
+            NotificationBridge.rebind(getContext());
+        }
+    }
+
     /** Asks for SMS access if needed. Resolves with {granted: true|false}. */
     @PluginMethod
     public void requestAccess(PluginCall call) {
