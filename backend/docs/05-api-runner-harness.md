@@ -45,25 +45,25 @@ The ways into the engine, the way to score it, and the optional model code.
 
 The contract for the front end is in `API.md`. This section explains the code.
 
-**Lines 25–28** — four routers, by who may call them:
-- `router` (line 25) needs a caregiver linked to the person in the path.
-- `person_router` (line 26) accepts that caregiver or the protected person:
+**Lines 24–27** — four routers, by who may call them:
+- `router` (line 24) needs a caregiver linked to the person in the path.
+- `person_router` (line 25) accepts that caregiver or the protected person:
   outbox, feedback, reviews addressed to the person, the person's own state,
   and the phone's inbox sync.
-- `open_router` (line 27) needs no session: `GET /health` and
+- `open_router` (line 26) needs no session: `GET /health` and
   `GET /privacy/patterns`, neither of which holds anyone's data.
-- `gateway_router` (line 28) accepts signed Twilio webhooks without a Clerk session.
+- `gateway_router` (line 27) accepts signed Twilio webhooks without a Clerk session.
 
 Each `dependencies=[Depends(...)]` runs `api/auth.py` before the route body.
-Line 13 imports the scoped role checks from there.
+Line 12 imports the scoped role checks from there.
 
-**Lines 29–39** — `runtime` is the shared development console runtime.
+**Lines 28–38** — `runtime` is the shared development console runtime.
 `caregiver_runtime` and `member_runtime` select the separate runtime for the
 person in the URL. A restart loses nothing: each runtime saves its incidents
 and reviews to its own file (`core/store.py`), and `api/store.py` keeps people,
 invites and mailboxes in SQLite.
 
-### Request and response shapes (lines 42–87)
+### Request and response shapes (lines 41–86)
 
 Each class describes a JSON body. FastAPI rejects a request that does not
 fit, with error 422, before any of our code runs.
@@ -74,7 +74,7 @@ fit, with error 422, before any of our code runs.
 - `StepRequest` — `steps`: how many messages to process; at least 1.
 - `EmailUpload` — `content`: raw `.eml` text.
 - `SharedMessage` — `text` (at least one character), `sender`, `channel`, and
-  `timestamp` (line 69): when the phone received it. The message's id is made
+  `timestamp` (line 68): when the phone received it. The message's id is made
   from the time, sender and text, so a phone that always sends the real
   received time can re-sync its inbox without anything being processed twice.
 - `Feedback` — `legitimate`: true or false.
@@ -82,19 +82,19 @@ fit, with error 422, before any of our code runs.
 - `Withheld` — the reply when a message is discarded: `status` and `reason`.
 - `PersonMessage` — one warning for the person: `incident_id` and `message`.
 
-### Helpers (lines 90–105)
+### Helpers (lines 89–104)
 
-- **90–91 `_now`** — the current UTC time as text.
-- **103–105 `take_in_email`** — one raw email in, one decision out, for one
+- **89–90 `_now`** — the current UTC time as text.
+- **102–104 `take_in_email`** — one raw email in, one decision out, for one
   person's runtime. The API route, the live mailbox and the Gmail scanner all
   call it, so they cannot behave differently.
-- **94–100 `_take_in`** — the shared path for live intake:
-  - **96–98** — ask the domain whether the row must be withheld. If so, return
+- **93–99 `_take_in`** — the shared path for live intake:
+  - **95–97** — ask the domain whether the row must be withheld. If so, return
     a `Withheld` reply and store nothing.
-  - **99** — parse it safely. The number passed in comes from
+  - **98** — parse it safely. The number passed in comes from
     `runtime.next_report_number()`, which is never reused, so a report ID made
     from it cannot collide even after the scanner forgets safe mail.
-  - **100** — process it safely. A decision always comes back.
+  - **99** — process it safely. A decision always comes back.
 
 ### Endpoints
 
@@ -105,70 +105,73 @@ reply is sent.
 
 | Lines | Method and path | Group | What it does |
 |---|---|---|---|
-| 110–113 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
-| 116–119 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in; uses the phone's `timestamp` when given |
-| 122–125 | `POST /intake/share/batch` | person | Many messages at once, oldest first, for the person's phone syncing its SMS inbox |
-| 128–131 | `GET /privacy/patterns` | open | The one-time-code and secret patterns, so the phone can apply the same filter before sending anything |
-| 134–155 | `POST /intake/whatsapp` | intake (signed gateway) | Validate Twilio's signature, then take in the message |
-| 158–164 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
-| 169–173 | `GET /outbox` | person | Warnings not yet answered by the person |
-| 176–186 | `POST /incidents/{id}/feedback` | person | Only the person may answer about their incident |
-| 191–194 | `GET /incidents` | caregiver | Every incident |
-| 197–207 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
-| 210–215 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
-| 218–222 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
-| 225–229 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
-| 232–235 | `GET /person/reviews` | person | Only reviews addressed to the protected person |
-| 238–241 | `GET /person/state` | person | For the phone: whether a caregiver decides, and the disputes to lodge |
-| 244–255 | `POST /reviews/{id}/decision` | person or caregiver | Only the addressed role may approve or reject |
-| 258–266 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
-| 271–276 | `GET /health` | system | Confirms the server is up and optional parts. No session needed |
-| 279–284 | `GET /state` | system | Everything in one call, plus the simulated world |
-| 287–292 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled, and save it |
-| 295–299 | `POST /reset` | system | Empty this person's runtime |
-| 302–309 | `POST /replay` | system | Reset, then process a list of reports |
-| 312–320 | `POST /replay/load` | system | Queue a file for step-through replay |
-| 323–327 | `POST /replay/step` | system | Process the next messages in the queue |
+| 109–112 | `POST /intake/email` | intake | Convert raw email text to a row and take it in |
+| 115–118 | `POST /intake/share` | intake | Convert a hand-shared message to a row and take it in; uses the phone's `timestamp` when given |
+| 121–124 | `POST /intake/share/batch` | person | Many messages at once, oldest first, for the person's phone syncing its SMS inbox |
+| 127–130 | `GET /privacy/patterns` | open | The one-time-code and secret patterns, so the phone can apply the same filter before sending anything |
+| 133–158 | `POST /intake/whatsapp` | intake (signed gateway) | Validate Twilio's signature, then take in the message |
+| 161–167 | `POST /reports` | intake | Process a ready-made report. A reused ID with different content returns 409 |
+| 172–176 | `GET /outbox` | person | Warnings not yet answered by the person |
+| 179–189 | `POST /incidents/{id}/feedback` | person | Only the person may answer about their incident |
+| 194–197 | `GET /incidents` | caregiver | Every incident |
+| 200–210 | `GET /incidents/{id}` | caregiver | One incident with its reports, decisions and reviews |
+| 213–218 | `GET /decisions/{report_id}` | caregiver | One decision and its trace; 404 if unknown |
+| 221–225 | `GET /reviews` | caregiver | The review queue, optionally filtered by `status` |
+| 228–232 | `GET /guardian/briefs` | caregiver | Each pending caregiver review as a plain message with a WhatsApp link |
+| 235–238 | `GET /person/reviews` | person | Only reviews addressed to the protected person |
+| 241–244 | `GET /person/state` | person | For the phone: whether a caregiver decides, and the disputes to lodge |
+| 247–258 | `POST /reviews/{id}/decision` | person or caregiver | Only the addressed role may approve or reject |
+| 261–269 | `POST /incidents/{id}/state` | caregiver | A human moves an incident's state |
+| 274–279 | `GET /health` | system | Confirms the server is up and optional parts. No session needed |
+| 282–287 | `GET /state` | system | Everything in one call, plus the simulated world |
+| 290–295 | `POST /settings/guardian` | system | Say whether a caregiver is enrolled, and save it |
+| 298–302 | `POST /reset` | system | Empty this person's runtime |
+| 305–312 | `POST /replay` | system | Reset, then process a list of reports |
+| 315–323 | `POST /replay/load` | system | Queue a file for step-through replay |
+| 326–330 | `POST /replay/step` | system | Process the next messages in the queue |
 
-**`feedback` in detail (176–186)**
-- **179–180** — only the protected person may answer outside development mode.
-- **181–182** — unknown incident: error 404.
-- **183** — a sentence describing the answer.
-- **184–185** — the answer is wrapped as a `RawInputReport` with `source`
+**`feedback` in detail (179–189)**
+- **182–183** — only the protected person may answer outside development mode.
+- **184–185** — unknown incident: error 404.
+- **186** — a sentence describing the answer.
+- **187–188** — the answer is wrapped as a `RawInputReport` with `source`
   `"person"`. Its metadata names the incident (so the correlator links it
   explicitly) and carries the `feedback` value.
-- **186** — it is processed like any other message. The person's answer is
+- **189** — it is processed like any other message. The person's answer is
   evidence that goes through the same policy; it is not a command.
 
-**`intake_whatsapp` in detail (134–155)**
-- **137** — parse Twilio's form body, including every field Twilio sent.
-- **138–148** — outside development mode, require `TWILIO_AUTH_TOKEN` and
+**`intake_whatsapp` in detail (133–158)**
+- **136** — parse Twilio's form body, including every field Twilio sent.
+- **137–151** — outside development mode, require `TWILIO_AUTH_TOKEN` and
   validate `X-Twilio-Signature` using Twilio's SDK. `TWILIO_PUBLIC_ORIGIN`
   supplies the external host and scheme when a proxy changes the request URL;
   path and query are kept in the signed URL. An invalid signature returns 403.
-- **149–151** — choose the named person's runtime, or return 404.
-- **152** — `text` is the message; `sender` is the number, with the
+  Twilio's package is imported here (lines 146–149), not at the top of the
+  file, so a machine without it still starts the server; only this webhook
+  answers 503 and says to install it.
+- **152–154** — choose the named person's runtime, or return 404.
+- **155** — `text` is the message; `sender` is the number, with the
   `whatsapp:` prefix removed.
-- **153–154** — an empty message is ignored; otherwise it goes through the
+- **156–157** — an empty message is ignored; otherwise it goes through the
   same `_take_in` path as a shared SMS, with the channel set to `whatsapp`.
-- **155** — reply with an empty response. A gateway would send any text in the
+- **158** — reply with an empty response. A gateway would send any text in the
   reply back to the sender, and the agent must never answer a scammer.
 
 The tests sign simulated Twilio posts; a live gateway has not been verified.
 
-**`guardian_briefs` in detail (225–229)** — for every review that is
+**`guardian_briefs` in detail (228–232)** — for every review that is
 `PENDING` and addressed to the `CAREGIVER`, build a brief from the review and
 the decision that opened it.
 
-**`reviews` in detail (218–222)** — `status` and `audience` are optional query
+**`reviews` in detail (221–225)** — `status` and `audience` are optional query
 parameters. `?status=PENDING&audience=PERSON` returns what is waiting for the
 person themselves; with nothing, every review is returned.
 
-**`replay_load` in detail (312–320)**
-- **316** — strip an invisible marker from the start of the text, read the
+**`replay_load` in detail (315–323)**
+- **319** — strip an invisible marker from the start of the text, read the
   rows, and drop the withheld ones.
-- **317–318** — an unsupported file type returns error 400.
-- **319** — parse every row safely and hand the list to the runtime's queue.
+- **320–321** — an unsupported file type returns error 400.
+- **322** — parse every row safely and hand the list to the runtime's queue.
 
 **Error handling in `decide` and `move_state`** — a `KeyError` (unknown ID)
 becomes 404; a `ValueError` (not allowed right now) becomes 409.

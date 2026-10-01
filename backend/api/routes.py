@@ -8,7 +8,6 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from twilio.request_validator import RequestValidator
 
 from api.auth import Caller, active_caregiver_person, active_member_person, dev_open, member
 from api.pool import default_runtime, runtime_for
@@ -144,6 +143,10 @@ async def intake_whatsapp(request: Request, person_id: str | None = None):
         if request.url.query:
             url += f"?{request.url.query}"
         fields = {key: values[0] for key, values in form.items()}
+        try:
+            from twilio.request_validator import RequestValidator  # only this webhook needs Twilio; the server starts without it
+        except ImportError as error:
+            raise HTTPException(503, "WhatsApp webhook needs the twilio package: pip install -r requirements.txt") from error
         if not RequestValidator(token).validate(url, fields, request.headers.get("X-Twilio-Signature", "")):
             raise HTTPException(403, "Invalid WhatsApp gateway signature")
     if person_id is not None and get_store().person(person_id) is None:
