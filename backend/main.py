@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from api.mailbox import start_polling
 from api.people import router as people_router
 from api.auth import dev_open
-from api.routes import gateway_router, open_router, person_router, router
+from api.routes import open_router, person_router, router
 from api.scanner import forwarded_handler, note_forwarded, start_scanning
 from api.store import get_store
 
@@ -25,7 +25,7 @@ if origins:
 
 app.include_router(open_router, prefix="/api")      # /api/health
 app.include_router(people_router, prefix="/api")    # /api/me, /api/people, /api/invites
-for each in (gateway_router, person_router, router):
+for each in (person_router, router):
     app.include_router(each, prefix="/api/people/{person_id}")  # everything about one person names them in the address
     if dev_open():  # the plain console cannot name a person, so in development mode the same routes also answer without one
         app.include_router(each, prefix="/api", include_in_schema=False)

@@ -11,8 +11,7 @@ approve or reject.
   gets `{id}` from `GET /me` (`people`); the protected person gets their own id
   from `GET /me` (`person`). Only development mode exposes unscoped calls.
 - Interactive documentation with every schema: `http://127.0.0.1:8000/docs`
-- API bodies are JSON, except the form-encoded WhatsApp webhook. Every route except `GET /health`,
-  `GET /invites/{token}` and `POST /intake/whatsapp`
+- API bodies are JSON. Every route except `GET /health` and `GET /invites/{token}`
   needs a signed-in Clerk session: `Authorization: Bearer <token>` (see
   [Signing in and roles](#signing-in-and-roles)).
 - Incidents and reviews are in memory per person. Restarting the server, or that person's
@@ -225,7 +224,9 @@ delivered at once.
 
 ## Android app (Capacitor)
 
-An Android app reading the phone's SMS inbox uses these calls:
+The Android app is a bridge: native code forwards each new SMS and WhatsApp
+message to the server by itself, with the app closed (see `frontend/ANDROID.md`).
+It uses these calls:
 
 1. `GET /api/privacy/patterns` once at start-up. It needs no person and no
    session. It returns the patterns for
@@ -234,10 +235,10 @@ An Android app reading the phone's SMS inbox uses these calls:
    matching message. The server applies the same filter again, but the
    privacy promise only holds if those messages never leave the device.
 2. `POST /api/people/{id}/intake/share/batch` for the first sync and for each
-   new message: a list of `{"text", "sender", "channel": "sms", "timestamp"}`,
+   new message: a list of `{"text", "sender", "channel": "sms" or "whatsapp", "timestamp"}`,
    oldest first.
-3. `GET /api/people/{id}/outbox`, `/person/reviews?status=PENDING` and
-   `/person/state` every few seconds, for warnings, questions and disputes.
+3. The reply to each batch: any warning the agent sent the person is shown
+   at once as a phone notification. Everything else is on the dashboard.
 
 **Pairing instead of signing in.** The phone app cannot sign in, so the
 caregiver pairs it: `POST /api/people/{id}/phone` returns
@@ -272,16 +273,6 @@ to `backend/data/people/<person id>.json` after each change (the development
 runtime uses `backend/data/state.json`) and loads them on start-up, so a
 restart clears nothing. People, invites and mailboxes are kept in SQLite
 (`backend/kinguard.db`). `POST /reset` still empties one person's runtime.
-
-## WhatsApp gateway (optional)
-
-`POST /people/{id}/intake/whatsapp` accepts Twilio's form fields (`From` and
-`Body`). Set `TWILIO_AUTH_TOKEN` in `backend/.env`; outside development mode,
-requests without a valid `X-Twilio-Signature` receive `403`, and an unset token
-returns `503`. Set `TWILIO_PUBLIC_ORIGIN` to the public scheme and host Twilio
-calls when a proxy changes the request's internal URL. The validator uses the
-full path, query string and all form fields. This has only been tested with
-signed simulated posts, not a live gateway. [Twilio's signature guidance](https://www.twilio.com/docs/usage/webhooks/webhooks-security).
 
 ## Live inbox
 

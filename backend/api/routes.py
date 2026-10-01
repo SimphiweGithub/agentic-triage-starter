@@ -3,15 +3,11 @@ from datetime import datetime, timezone
 import os
 from pathlib import PurePath
 
-from urllib.parse import parse_qs
-
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.auth import Caller, active_caregiver_person, active_member_person, dev_open, member
 from api.pool import default_runtime, runtime_for
-from api.store import get_store
 from core.ingest import kept, read_text_records, safe_parse
 from core.runtime import TriageRuntime
 from domain.briefs import guardian_brief
@@ -24,7 +20,6 @@ from domain.schemas import DecisionRecord, IncidentRecord, RawInputReport, Revie
 router = APIRouter(dependencies=[Depends(active_caregiver_person)])   # the caregiver's routes, about one person in the address
 person_router = APIRouter(dependencies=[Depends(active_member_person)])  # the few the protected person may also use
 open_router = APIRouter()                                               # health: no session to check
-gateway_router = APIRouter()                                            # the WhatsApp gateway, which cannot sign in; it names one person in its address
 runtime = default_runtime()  # the shared runtime of the plain console and offline use; each person has their own (api/pool.py)
 
 
@@ -128,34 +123,6 @@ def intake_share_batch(messages: list[SharedMessage], rt: TriageRuntime = Depend
 def privacy_patterns():
     """The patterns for messages that must never leave the phone, so an app can apply the same filter before sending. Holds no data."""
     return {"withhold": [OTP_PATTERN.pattern, SECRET_PATTERN.pattern], "flags": "i"}
-
-
-@gateway_router.post("/intake/whatsapp", tags=["intake"])
-async def intake_whatsapp(request: Request, person_id: str | None = None):
-    """Webhook for a WhatsApp gateway (Twilio format): a form with From and Body. The gateway is pointed at one person's address. The message is taken in like a shared SMS."""
-    form = parse_qs((await request.body()).decode("utf-8", "replace"))
-    if not dev_open():
-        token = os.getenv("TWILIO_AUTH_TOKEN")
-        if not token:
-            raise HTTPException(503, "WhatsApp webhook is not configured")
-        origin = os.getenv("TWILIO_PUBLIC_ORIGIN", "").rstrip("/")
-        url = f"{origin}{request.url.path}" if origin else str(request.url).split("?", 1)[0]
-        if request.url.query:
-            url += f"?{request.url.query}"
-        fields = {key: values[0] for key, values in form.items()}
-        try:
-            from twilio.request_validator import RequestValidator  # only this webhook needs Twilio; the server starts without it
-        except ImportError as error:
-            raise HTTPException(503, "WhatsApp webhook needs the twilio package: pip install -r requirements.txt") from error
-        if not RequestValidator(token).validate(url, fields, request.headers.get("X-Twilio-Signature", "")):
-            raise HTTPException(403, "Invalid WhatsApp gateway signature")
-    if person_id is not None and get_store().person(person_id) is None:
-        raise HTTPException(404, "Person not found")
-    rt = runtime_for(person_id) if person_id else default_runtime()
-    text, sender = form.get("Body", [""])[0], form.get("From", [""])[0].removeprefix("whatsapp:")
-    if text.strip():
-        _take_in(share_to_row(text, sender, "whatsapp", _now()), rt)
-    return Response(content="<Response></Response>", media_type="application/xml")  # an empty reply: the agent never answers the sender
 
 
 @router.post("/reports", tags=["intake"], status_code=201, response_model=DecisionRecord)

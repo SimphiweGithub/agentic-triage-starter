@@ -63,7 +63,7 @@ All off by default. Set them as environment variables before starting the server
 | `ENABLE_GEMINI=1` with `GEMINI_API_KEY` | Gemini rewords the warning shown to the person. The result is rejected if it contains a number, link or address. `GEMINI_MODEL` is optional (default `gemini-3.5-flash-lite`). |
 
 | `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD` | A live inbox: unread emails in a mailbox created for Scam Stop are taken in every `IMAP_POLL_SECONDS` (default 15). Tested with a stand-in mailbox only. |
-| `CLERK_SECRET_KEY` | Turns sign-in on for every route except `/health` and the WhatsApp webhook, and starts the background scan of the protected person's Gmail. The server checks the caller's Clerk session and asks Clerk for the person's Google token. Tested with stand-ins only. |
+| `CLERK_SECRET_KEY` | Turns sign-in on for every route except `/health`, the privacy patterns and the invite preview, and starts the background scan of the protected person's Gmail. The server checks the caller's Clerk session and asks Clerk for the person's Google token. Tested with stand-ins only. |
 | `SCAN_SECONDS` | How often each connected Gmail is checked (default 60). |
 | `KINGUARD_DB` | The SQLite file for people, invites, mailboxes and scanned-message verdicts (default `backend/kinguard.db`, ignored by git). |
 | `KINGUARD_DEV_OPEN=1` | Development only: skips sign-in so the plain console and local scripts work. Never on a reachable server. |
