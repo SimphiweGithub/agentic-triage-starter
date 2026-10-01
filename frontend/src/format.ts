@@ -189,9 +189,16 @@ export const CHANNELS = ['SMS', 'WhatsApp'] as const
 export type Channel = (typeof CHANNELS)[number]
 
 /** The channel the first message of an alert arrived on. */
+/** Every channel an alert's messages came through, in order: one scam can arrive by SMS and WhatsApp alike. */
+export function incidentChannels(incident: Incident, reports: Map<string, Report>): string[] {
+  const seen = incident.report_ids.map((id) => reports.get(id)).filter((item): item is Report => Boolean(item)).map((item) => sourceLabel(item.source))
+  return seen.length > 0 ? [...new Set(seen)] : ['Message']
+}
+
+/** "SMS + WhatsApp · 2 messages": where an alert's messages came from, and how many there are. */
 export function incidentChannel(incident: Incident, reports: Map<string, Report>): string {
-  const first = reports.get(incident.report_ids[0])
-  return first ? sourceLabel(first.source) : 'Message'
+  const count = incident.report_ids.length
+  return incidentChannels(incident, reports).join(' + ') + (count > 1 ? ` · ${count} messages` : '')
 }
 
 export function incidentReports(incident: Incident, state: KinGuardState): Report[] {

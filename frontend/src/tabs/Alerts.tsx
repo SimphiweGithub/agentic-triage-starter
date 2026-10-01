@@ -3,7 +3,7 @@ import { GroupBadge, GroupIcon } from '@/components/status'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { GROUP_WORD, PERSON, alertGroup, formatTime, incidentChannel, incidentTitle, threatLabel, type Group } from '@/format'
+import { GROUP_WORD, PERSON, alertGroup, formatTime, incidentChannel, incidentChannels, incidentTitle, threatLabel, type Group } from '@/format'
 import type { Incident, KinGuardState } from '@/types'
 
 type Props = {
@@ -24,8 +24,8 @@ export function Alerts({ state, onOpenAlert, onCheck }: Props) {
   const [channel, setChannel] = useState('all')
   const reports = new Map(state.reports.map((item) => [item.report_id, item]))
   const all = [...state.incidents].sort(byPriority)
-  const channels = [...new Set(all.map((item) => incidentChannel(item, reports)))]
-  const shown = all.filter((item) => (group === 'all' || alertGroup(item) === group) && (channel === 'all' || incidentChannel(item, reports) === channel))
+  const channels = [...new Set(all.flatMap((item) => incidentChannels(item, reports)))]
+  const shown = all.filter((item) => (group === 'all' || alertGroup(item) === group) && (channel === 'all' || incidentChannels(item, reports).includes(channel)))
   const count = (item: Group | 'all') => (item === 'all' ? all.length : all.filter((incident) => alertGroup(incident) === item).length)
 
   if (all.length === 0) {
