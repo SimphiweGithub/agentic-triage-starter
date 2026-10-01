@@ -135,7 +135,7 @@ through the API in `API.md`.
 | Jev | Seven yes/no questions and the threat type, in the gate | Fast, cheap, and it returns probabilities. It can add suspicion and never remove a rule's finding |
 | Gemini | Wording the warning only | It writes well. Its output is rejected if it contains a number, link or address |
 | Linking messages | Shared reference, operator, phone or domain, then guarded fuzzy text | Scam messages share identifiers, not wording. A new company name with the same director is the same operator |
-| Response ladder | Warn, block the sender, dispute the debit, block the operator | Each step is more disruptive, so each needs more evidence |
+| Response ladder | Warn, mark the sender as a scammer, dispute the debit, block the operator | Each step is more disruptive, so each needs more evidence. Marking is not blocking: no app may block a contact inside WhatsApp, SMS or Gmail, so the agent remembers the sender, treats their later messages as high risk, and tells the person how to block them |
 | Automatic actions | Warning the person, blocking a sender, withdrawing our own action | Reversible and low consequence |
 | Caregiver approval | Disputing a debit, blocking an operator, anything below 0.75 confidence | They affect the bank relationship, or we are not sure |
 | No caregiver | The same approvals go to the person, who is the account holder | They have the right to dispute their own debits. A person with nobody to ask should not be left unprotected |
@@ -270,9 +270,11 @@ South African messages labelled as scam or not by someone outside the team.
 
 ## 7. Known limitations
 
-**What is simulated.** The bank, the company registry and the sender
-blocklist are fixture data and in-memory state. Only the domain-age lookup,
-Jev and Gemini are real. A dispute is drafted, not lodged.
+**What is simulated.** The bank and the company registry are fixture data.
+The domain-age lookup, Jev, Gemini, Gmail reading and the phone bridge (SMS
+and WhatsApp) are real. A dispute is drafted, not lodged. Marking a sender as
+a scammer is real memory that raises the risk of their later messages, but it
+blocks nothing in other apps: no app is allowed to, so the person is told how.
 
 **What is not measured.** The cooling-off length, the risk weights, the 0.6 containment threshold,
 the R300 amount, the 90-day "new" rule, the price-jump ratio and the

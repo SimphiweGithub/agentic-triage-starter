@@ -111,8 +111,8 @@ export function Devices({ state, mailboxes, devices, onOpenDevice, onAddDevice, 
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg font-bold">Blocked senders</CardTitle>
-            <CardDescription>Addresses and domains the mail filter now stops before they reach {PERSON.name}.</CardDescription>
+            <CardTitle className="text-lg font-bold">Senders marked as scammers</CardTitle>
+            <CardDescription>Anything else they send is treated as a scam at once. Scam Stop cannot block them inside WhatsApp, SMS or Gmail; {PERSON.name} is told how.</CardDescription>
           </CardHeader>
           <CardContent>
             {state.world.flagged.length === 0 ? (

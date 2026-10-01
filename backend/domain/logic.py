@@ -18,6 +18,12 @@ THREAT_HINTS: dict[ThreatDomain, str] = {
     ThreatDomain.JOB_SCAM: " Jobs that promise easy daily pay end with a request for a fee or your bank details.",
     ThreatDomain.IMPERSONATION: " Call your relative on the number you already have before sending anything.",
 }
+# Scam Stop cannot block anyone in another app; it remembers the sender and tells the person how to block them.
+BLOCK_HOW: dict[str, str] = {
+    "whatsapp": " To stop their messages, block them in WhatsApp: open the chat, tap the three dots, then More, then Block.",
+    "sms": " To stop their texts, block the number in your Messages app.",
+    "email": " To stop their emails, block the sender in Gmail.",
+}
 TIMESTAMP_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%Y/%m/%d %H:%M")
 
 
@@ -162,6 +168,12 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     if known:  # a human said a doubtful warning from this sender was wrong; strong evidence still overrides that
         risk = 0.0
     evidence = verdict.reasons + [finding.note for finding in findings if finding.weight > 0]
+    shared_provider = signals["sender_domain"] in PROTECTED_DOMAINS
+    flag_target = signals["sender"] if shared_provider or not signals["sender_domain"] else signals["sender_domain"]
+    if flag_target and flag_target in WORLD.flagged and not trusted:
+        # Already marked as a scammer: even an innocent-looking follow-up is treated as part of the scam.
+        risk = max(risk, CONTAIN_THRESHOLD)
+        evidence.append("this sender was already marked as a scammer")
     established = bool(company) and company["age_days"] >= YOUNG_DAYS
     if is_mandate and not trusted and not (established and verdict.score < GATE_THRESHOLD):
         # An approved mandate is hard to dispute later, so a request is advised against unless the company checks out.
@@ -186,7 +198,6 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
     review_reason = "Evidence conflicts: suspicious wording from an established sender" if conflict else None
     disputed = any(record.action.type is ActionType.DRAFT_DISPUTE and record.outcome is ActionOutcome.EXECUTED
                    for record in incident.actions)
-    shared_provider = signals["sender_domain"] in PROTECTED_DOMAINS
     who = signals["merchant"] or (signals["sender"] if shared_provider or not signals["sender_domain"] else signals["sender_domain"]) or "an unknown sender"
     severity, target_state = SeverityLevel.MEDIUM, IncidentState.CONTAINED
 
@@ -227,9 +238,11 @@ def assess(report: RawInputReport, incident: IncidentRecord) -> Assessment:
         if threat in (ThreatDomain.TECH_SUPPORT_SCAM, ThreatDomain.IDENTITY_FARMING):
             severity = SeverityLevel.HIGH
         action = ActionProposal(type=ActionType.FLAG_SENDER, service=ServiceDomain.MAIL_FILTER, details={
-            "target": signals["sender"] if shared_provider or not signals["sender_domain"] else signals["sender_domain"],
-            "message": f"A message from {who} looks like a scam. We have blocked the sender. Please do not reply, pay, or call any number in it.",
-            "ask": f"A message from {who} looks like a scam. Block the sender and send a warning?"})
+            "target": flag_target,
+            "message": f"A message from {who} looks like a scam. Please do not reply, pay, or call any number in it. "
+                       f"Scam Stop has marked this sender as a scammer and will warn you about anything else they send."
+                       + BLOCK_HOW.get(report.source, ""),
+            "ask": f"A message from {who} looks like a scam. Mark the sender as a scammer and send a warning?"})
     else:
         severity, target_state = SeverityLevel.LOW, IncidentState.INVESTIGATING
         action = ActionProposal(type=ActionType.WARN_PERSON, service=ServiceDomain.PERSON, details={

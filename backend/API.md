@@ -163,7 +163,7 @@ A dispute's `details` also carry `dispute_by` (the last date to lodge it) and
   "summary": "first 240 characters of the first message",
   "updated_at": "2026-10-01T09:00:05+00:00",
   "review_hold": null,
-  "actions": [{"report_id": "E-8d863f2f", "action": {"type": "FLAG_SENDER", "service": "MAIL_FILTER", "details": {"target": "techcare-help.example"}}, "outcome": "EXECUTED", "detail": "techcare-help.example added to the sender blocklist; person warned"}],
+  "actions": [{"report_id": "E-8d863f2f", "action": {"type": "FLAG_SENDER", "service": "MAIL_FILTER", "details": {"target": "techcare-help.example"}}, "outcome": "EXECUTED", "detail": "techcare-help.example marked as a scammer; later messages from them are treated as high risk; person warned"}],
   "labels": {"threat": "TECH_SUPPORT_SCAM", "merchant": "techcare support"}
 }
 ```
@@ -380,7 +380,9 @@ message in it demonstrates.
 ## Things the front end should know
 
 - With the models switched on, an intake call takes one to three seconds.
-- The bank, company registry and sender blocklist are simulated. Nothing
+- The bank and company registry are simulated. The list of senders marked as
+  scammers is Scam Stop's own memory: it blocks nothing inside WhatsApp, SMS
+  or Gmail; the warning tells the person how to block them. Nothing
   leaves the machine except the masked message text sent to the models and
   domain names sent to the public registration lookup.
 - Each protected person has a separate runtime. Sign-in is on by default. `KINGUARD_DEV_OPEN=1`

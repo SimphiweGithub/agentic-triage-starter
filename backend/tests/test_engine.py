@@ -1330,6 +1330,26 @@ class PersistenceTests(unittest.TestCase):
             pool.forget_everyone()
 
 
+class MarkedScammerTests(unittest.TestCase):
+    def test_a_marked_scammer_is_remembered_and_the_person_is_told_how_to_block_them(self):
+        runtime = TriageRuntime()
+        scam = runtime.process(RawInputReport(report_id="W1", source="whatsapp", timestamp="2026-10-01T09:05:00",
+                                              payload="Congratulations! You have been selected for a R5000 reward. Pay the R200 release fee via voucher to claim.",
+                                              metadata={"sender": "Raven"}))
+        self.assertEqual(scam.proposed_action.type, ActionType.FLAG_SENDER)
+        self.assertEqual(scam.action_outcome, ActionOutcome.EXECUTED)
+        warning = WORLD.outbox[-1]["message"]
+        self.assertNotIn("blocked", warning.lower())  # nothing outside Scam Stop was blocked
+        self.assertIn("block them in WhatsApp", warning)
+        follow_up = runtime.process(RawInputReport(report_id="W2", source="whatsapp", timestamp="2026-10-01T11:00:00",
+                                                   payload="Hi, did you get my message?", metadata={"sender": "Raven"}))
+        self.assertNotEqual(follow_up.labels["threat"], ThreatDomain.BENIGN.value)
+        self.assertIn("already marked as a scammer", follow_up.trace[1])
+        stranger = runtime.process(RawInputReport(report_id="W3", source="whatsapp", timestamp="2026-10-01T11:01:00",
+                                                  payload="Hi, did you get my message?", metadata={"sender": "Thandi"}))
+        self.assertEqual(stranger.labels["threat"], ThreatDomain.BENIGN.value)
+
+
 class PlainQuestionTests(unittest.TestCase):
     def test_every_action_that_can_be_held_carries_a_plain_question(self):
         runtime = TriageRuntime()

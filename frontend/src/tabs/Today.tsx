@@ -109,7 +109,7 @@ export function Today({ state, devices, actions, onOpenActions, onOpenAlert, onO
             <CardContent>
               <ul className="grid gap-3">
                 <Stat n={handled} text={handled === 1 ? 'scam handled' : 'scams handled'} />
-                <Stat n={state.world.flagged.length} text={state.world.flagged.length === 1 ? 'sender blocked' : 'senders blocked'} />
+                <Stat n={state.world.flagged.length} text={state.world.flagged.length === 1 ? 'scammer marked' : 'scammers marked'} />
                 <Stat n={disputes} text={disputes === 1 ? 'dispute ready for the bank' : 'disputes ready for the bank'} />
               </ul>
             </CardContent>

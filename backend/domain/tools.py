@@ -210,7 +210,7 @@ def flag_sender(action: ActionProposal, incident: IncidentRecord, report: RawInp
         return ToolResult(ok=False, detail=f"{target} is a shared mail provider; flagging the whole domain is refused", data={"protected": True})
     WORLD.flagged.add(target)
     WORLD.outbox.append({"incident_id": incident.incident_id, "message": action.details.get("message", "")})
-    return ToolResult(ok=True, detail=f"{target} added to the sender blocklist; person warned")
+    return ToolResult(ok=True, detail=f"{target} marked as a scammer; later messages from them are treated as high risk; person warned")
 
 
 def draft_dispute(action: ActionProposal, incident: IncidentRecord, report: RawInputReport) -> ToolResult:

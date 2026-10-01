@@ -71,7 +71,7 @@ export function actionLabel(type: ActionType, details: Record<string, unknown> =
   const company = typeof details.company === 'string' ? details.company : ''
   switch (type) {
     case 'FLAG_SENDER':
-      return target ? `Blocked ${target}` : 'Blocked the sender'
+      return target ? `Marked ${target} as a scammer` : 'Marked the sender as a scammer'
     case 'WARN_PERSON':
       return `Warned ${PERSON.name}`
     case 'DRAFT_DISPUTE':
@@ -238,9 +238,9 @@ export function approveEffect(review: Review): string {
     case 'BLOCK_OPERATOR':
       return 'Scam Stop asks the bank to refuse every debit from this company.'
     case 'FLAG_SENDER':
-      return `Scam Stop blocks this sender so messages stop reaching ${PERSON.name}.`
+      return `Scam Stop marks this sender as a scammer, warns ${PERSON.name} about anything else they send, and tells ${PERSON.name} how to block them.`
     case 'WITHDRAW':
-      return 'Scam Stop undoes what it did earlier, for example unblocking a sender.'
+      return 'Scam Stop undoes what it did earlier, for example un-marking a sender.'
     default:
       return 'Scam Stop goes ahead with what it proposed.'
   }
@@ -266,7 +266,7 @@ export function decisionKind(review: Review): string {
     case 'BLOCK_OPERATOR':
       return 'Stop a company taking money'
     case 'FLAG_SENDER':
-      return 'Block a sender'
+      return 'Mark a sender as a scammer'
     case 'WITHDRAW':
       return 'Undo earlier actions'
     default:
